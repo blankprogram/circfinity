@@ -1,133 +1,29 @@
-// circuit_truth_table.cpp
-// C++23 implementation to canonicalize a Boolean expression, compute its
-// SHA-256 hash, and generate its truth table on the fly.
-
+#include <array>
 #include <cctype>
 #include <format>
 #include <iostream>
 #include <memory>
 #include <openssl/sha.h>
-#include <ranges>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_set>
 #include <vector>
 
-// Expression System
+using uint128_t = __uint128_t;
 
-struct Expr {
-    virtual ~Expr() = default;
-    virtual bool eval(const std::vector<bool> &inputs) const = 0;
-};
+static char bitChar(uint8_t b) { return b ? '1' : '0'; }
 
-struct Var : Expr {
-    int index;
-    explicit Var(int idx) noexcept : index(idx) {}
-    bool eval(const std::vector<bool> &inputs) const override {
-        return inputs[index];
+static std::string varName(int idx) {
+    if (idx < 26) {
+        return std::string(1, static_cast<char>('A' + idx));
+    } else {
+        int hi = (idx / 26) - 1;
+        int lo = idx % 26;
+        return std::string{static_cast<char>('A' + hi),
+                           static_cast<char>('A' + lo)};
     }
-};
-
-template <typename Op> struct Binary : Expr {
-    std::unique_ptr<Expr> left;
-    std::unique_ptr<Expr> right;
-
-    Binary(std::unique_ptr<Expr> l, std::unique_ptr<Expr> r) noexcept
-        : left(std::move(l)), right(std::move(r)) {}
-
-    bool eval(const std::vector<bool> &inputs) const override {
-        return Op{}(left->eval(inputs), right->eval(inputs));
-    }
-};
-
-struct Not : Expr {
-    std::unique_ptr<Expr> operand;
-    explicit Not(std::unique_ptr<Expr> op) noexcept : operand(std::move(op)) {}
-    bool eval(const std::vector<bool> &inputs) const override {
-        return !operand->eval(inputs);
-    }
-};
-
-struct AndOp {
-    static constexpr std::string_view name = "AND";
-    bool operator()(bool a, bool b) const noexcept { return a && b; }
-};
-struct OrOp {
-    static constexpr std::string_view name = "OR";
-    bool operator()(bool a, bool b) const noexcept { return a || b; }
-};
-struct XorOp {
-    static constexpr std::string_view name = "XOR";
-    bool operator()(bool a, bool b) const noexcept { return a != b; }
-};
-
-using And = Binary<AndOp>;
-using Or = Binary<OrOp>;
-using Xor = Binary<XorOp>;
-
-// Canonicalization + Serialization
-
-std::string serializeExpr(const Expr *expr);
-
-std::unique_ptr<Expr> canonicalize(const Expr *expr) {
-    if (auto const *v = dynamic_cast<const Var *>(expr)) {
-        return std::make_unique<Var>(v->index);
-    }
-    if (auto const *n = dynamic_cast<const Not *>(expr)) {
-        return std::make_unique<Not>(canonicalize(n->operand.get()));
-    }
-
-    auto canonicalPair = [&](auto const *node, auto makeNode) {
-        auto l = canonicalize(node->left.get());
-        auto r = canonicalize(node->right.get());
-        if (serializeExpr(l.get()) > serializeExpr(r.get())) {
-            std::swap(l, r);
-        }
-        return makeNode(std::move(l), std::move(r));
-    };
-
-    if (auto const *a = dynamic_cast<const And *>(expr)) {
-        return canonicalPair(a, [](auto l, auto r) {
-            return std::make_unique<And>(std::move(l), std::move(r));
-        });
-    }
-    if (auto const *o = dynamic_cast<const Or *>(expr)) {
-        return canonicalPair(o, [](auto l, auto r) {
-            return std::make_unique<Or>(std::move(l), std::move(r));
-        });
-    }
-    if (auto const *x = dynamic_cast<const Xor *>(expr)) {
-        return canonicalPair(x, [](auto l, auto r) {
-            return std::make_unique<Xor>(std::move(l), std::move(r));
-        });
-    }
-
-    throw std::runtime_error("Unknown expression node in canonicalize");
 }
-
-std::string serializeExpr(const Expr *expr) {
-    if (auto const *v = dynamic_cast<const Var *>(expr)) {
-        return std::string(1, static_cast<char>('A' + v->index));
-    }
-    if (auto const *n = dynamic_cast<const Not *>(expr)) {
-        return std::format("NOT({})", serializeExpr(n->operand.get()));
-    }
-    if (auto const *a = dynamic_cast<const And *>(expr)) {
-        return std::format("AND({},{})", serializeExpr(a->left.get()),
-                           serializeExpr(a->right.get()));
-    }
-    if (auto const *o = dynamic_cast<const Or *>(expr)) {
-        return std::format("OR({},{})", serializeExpr(o->left.get()),
-                           serializeExpr(o->right.get()));
-    }
-    if (auto const *x = dynamic_cast<const Xor *>(expr)) {
-        return std::format("XOR({},{})", serializeExpr(x->left.get()),
-                           serializeExpr(x->right.get()));
-    }
-    throw std::runtime_error("Unknown expression node in serializeExpr");
-}
-
-// Hashing
 
 std::string hashExpr(std::string_view expr) {
     unsigned char digest[SHA256_DIGEST_LENGTH];
@@ -142,13 +38,87 @@ std::string hashExpr(std::string_view expr) {
     return hex;
 }
 
-// Parser
+std::string toString(uint128_t value) {
+    if (value == 0)
+        return "0";
+    std::string tmp;
+    tmp.reserve(40);
+    while (value != 0) {
+        int digit = static_cast<int>(value % 10);
+        tmp.push_back(char('0' + digit));
+        value /= 10;
+    }
+    std::reverse(tmp.begin(), tmp.end());
+    return tmp;
+}
+
+struct Expr {
+    virtual ~Expr() = default;
+    virtual bool eval(const std::vector<uint8_t> &inputs) const = 0;
+    virtual void collectVars(std::unordered_set<int> &out) const = 0;
+    mutable bool isConstant = false;
+    mutable bool constValue = false;
+};
+
+struct Var : Expr {
+    int index;
+    explicit Var(int idx) noexcept : index(idx) {}
+    bool eval(const std::vector<uint8_t> &inputs) const override {
+        return inputs[index] != 0;
+    }
+    void collectVars(std::unordered_set<int> &out) const override {
+        out.insert(index);
+    }
+};
+
+template <typename Op> struct Binary : Expr {
+    std::unique_ptr<Expr> left, right;
+    Binary(std::unique_ptr<Expr> l, std::unique_ptr<Expr> r) noexcept
+        : left(std::move(l)), right(std::move(r)) {}
+    bool eval(const std::vector<uint8_t> &inputs) const override {
+        if (isConstant)
+            return constValue;
+        bool L = left->eval(inputs);
+        bool R = right->eval(inputs);
+        return Op{}(L, R);
+    }
+    void collectVars(std::unordered_set<int> &out) const override {
+        left->collectVars(out);
+        right->collectVars(out);
+    }
+};
+
+struct Not : Expr {
+    std::unique_ptr<Expr> operand;
+    explicit Not(std::unique_ptr<Expr> op) noexcept : operand(std::move(op)) {}
+    bool eval(const std::vector<uint8_t> &inputs) const override {
+        if (isConstant)
+            return constValue;
+        return !operand->eval(inputs);
+    }
+    void collectVars(std::unordered_set<int> &out) const override {
+        operand->collectVars(out);
+    }
+};
+
+struct AndOp {
+    bool operator()(bool a, bool b) const noexcept { return a && b; }
+};
+struct OrOp {
+    bool operator()(bool a, bool b) const noexcept { return a || b; }
+};
+struct XorOp {
+    bool operator()(bool a, bool b) const noexcept { return a != b; }
+};
+
+using And = Binary<AndOp>;
+using Or = Binary<OrOp>;
+using Xor = Binary<XorOp>;
 
 class Parser {
   public:
     Parser(std::string_view str, int vars) noexcept
         : source(str), varCount(vars), pos(0) {}
-
     [[nodiscard]] std::unique_ptr<Expr> parse() {
         pos = 0;
         return parseExpr();
@@ -184,9 +154,8 @@ class Parser {
 
     [[nodiscard]] std::unique_ptr<Expr> parseExpr() {
         skipWhitespace();
-        if (pos >= source.size()) {
+        if (pos >= source.size())
             throw std::runtime_error("Unexpected end of input");
-        }
 
         size_t startPos = pos;
         auto id = parseIdentifier();
@@ -200,102 +169,206 @@ class Parser {
 
             std::unique_ptr<Expr> rightNode = nullptr;
             if (id != "NOT") {
-                if (pos >= source.size() || source[pos] != ',') {
+                if (pos >= source.size() || source[pos] != ',')
                     throw std::runtime_error(
                         "Expected ',' after first operand");
-                }
                 ++pos;
                 rightNode = parseExpr();
             }
 
             skipWhitespace();
-            if (pos >= source.size() || source[pos] != ')') {
+            if (pos >= source.size() || source[pos] != ')')
                 throw std::runtime_error("Expected ')' to close operator");
-            }
             ++pos;
 
-            if (id == "AND") {
+            if (id == "AND")
                 return std::make_unique<And>(std::move(leftNode),
                                              std::move(rightNode));
-            }
-            if (id == "OR") {
+            if (id == "OR")
                 return std::make_unique<Or>(std::move(leftNode),
                                             std::move(rightNode));
-            }
-            if (id == "XOR") {
+            if (id == "XOR")
                 return std::make_unique<Xor>(std::move(leftNode),
                                              std::move(rightNode));
-            }
-            if (id == "NAND") {
+            if (id == "NAND")
                 return std::make_unique<Not>(std::make_unique<And>(
                     std::move(leftNode), std::move(rightNode)));
-            }
-            if (id == "NOR") {
+            if (id == "NOR")
                 return std::make_unique<Not>(std::make_unique<Or>(
                     std::move(leftNode), std::move(rightNode)));
-            }
-            if (id == "XNOR") {
+            if (id == "XNOR")
                 return std::make_unique<Not>(std::make_unique<Xor>(
                     std::move(leftNode), std::move(rightNode)));
-            }
-            if (id == "NOT") {
+            if (id == "NOT")
                 return std::make_unique<Not>(std::move(leftNode));
-            }
-
             throw std::runtime_error(
-                std::format("Unknown operator: {}", std::string(id)));
+                std::format("Unknown operator '{}' at position {}", id, pos));
         }
 
         pos = startPos;
         skipWhitespace();
         if (pos >= source.size() ||
-            !std::isupper(static_cast<unsigned char>(source[pos]))) {
+            !std::isupper(static_cast<unsigned char>(source[pos])))
             throw std::runtime_error("Expected variable (A-Z)");
-        }
+
         char varChar = source[pos++];
         int idx = varChar - 'A';
-        if (idx < 0 || idx >= varCount) {
+        if (idx < 0 || idx >= varCount)
             throw std::runtime_error(
                 std::format("Variable '{}' out of range", varChar));
-        }
+
         return std::make_unique<Var>(idx);
     }
 };
 
-// Main
+static uint128_t countTable[31][17];
+static bool countInit[31][17];
+
+uint128_t countExprs(int depth, int maxVar) {
+    if (maxVar < 1 || maxVar > 16)
+        throw std::out_of_range("maxVar must be 1..16");
+    if (depth < 0 || depth > 30)
+        return 0;
+
+    if (countInit[depth][maxVar]) {
+        return countTable[depth][maxVar];
+    }
+
+    uint128_t total = 0;
+    if (depth == 0) {
+        total = static_cast<uint128_t>(maxVar);
+    } else {
+        for (int d = 0; d < depth; ++d) {
+            total += countExprs(d, maxVar);
+        }
+        for (int d1 = 0; d1 < depth; ++d1) {
+            int d2 = depth - 1 - d1;
+            uint128_t leftCount = countExprs(d1, maxVar);
+            uint128_t rightCount = countExprs(d2, maxVar);
+            total += leftCount * rightCount * 3;
+        }
+    }
+
+    countInit[depth][maxVar] = true;
+    countTable[depth][maxVar] = total;
+    return total;
+}
+
+std::string generateExpr(uint128_t &n, int depth, int maxVar,
+                         std::string &buf) {
+    if (depth == 0) {
+        if (n < static_cast<uint128_t>(maxVar)) {
+            buf = varName(static_cast<int>(n));
+            return buf;
+        }
+        throw std::out_of_range("No more variables at depth=0");
+    }
+    for (int d = 0; d < depth; ++d) {
+        uint128_t c = countExprs(d, maxVar);
+        if (n < c) {
+            generateExpr(n, d, maxVar, buf);
+            buf.insert(0, "NOT(");
+            buf.push_back(')');
+            return buf;
+        }
+        n -= c;
+    }
+    static constexpr std::array<std::string_view, 3> ops = {"AND", "OR", "XOR"};
+    for (int opIdx = 0; opIdx < 3; ++opIdx) {
+        auto opName = ops[opIdx];
+        for (int d1 = 0; d1 < depth; ++d1) {
+            int d2 = depth - 1 - d1;
+            uint128_t leftCount = countExprs(d1, maxVar);
+            uint128_t rightCount = countExprs(d2, maxVar);
+            uint128_t pairCount = leftCount * rightCount;
+            if (n < pairCount) {
+                uint128_t li = n / rightCount;
+                uint128_t ri = n % rightCount;
+                generateExpr(li, d1, maxVar, buf);
+                std::string leftSide = buf;
+                generateExpr(ri, d2, maxVar, buf);
+                std::string rightSide = buf;
+                buf.clear();
+                buf.reserve(opName.size() + 2 + leftSide.size() + 1 +
+                            rightSide.size() + 1);
+                buf += opName;
+                buf.push_back('(');
+                buf += leftSide;
+                buf.push_back(',');
+                buf += rightSide;
+                buf.push_back(')');
+                return buf;
+            }
+            n -= pairCount;
+        }
+    }
+    throw std::out_of_range("Expression index too large");
+}
+
+std::string generateNthExpr(uint128_t n, int maxVar) {
+    int depth = 0;
+    std::string buf;
+    while (true) {
+        uint128_t c = countExprs(depth, maxVar);
+        if (c == 0) {
+            throw std::out_of_range("Index out of range at depth = " +
+                                    std::to_string(depth));
+        }
+        if (n < c) {
+            return generateExpr(n, depth, maxVar, buf);
+        }
+        n -= c;
+        ++depth;
+        if (depth > 30) {
+            throw std::out_of_range("Exceeded reasonable depth");
+        }
+    }
+}
 
 int main() {
-    constexpr std::string_view exprStr = "OR(AND(NOT(A),B), XNOR(AND(C,D),E))";
     constexpr int varCount = 5;
+    uint128_t exprIndex = (uint128_t)-1;
 
-    auto parsedExpr = Parser(exprStr, varCount).parse();
-    auto canonicalExpr = canonicalize(parsedExpr.get());
-    std::string serialized = serializeExpr(canonicalExpr.get());
-    std::string hash = hashExpr(serialized);
+    std::string exprStr = generateNthExpr(exprIndex, varCount);
+    std::string hash = hashExpr(exprStr);
 
-    std::cout << std::format("Expression:   {}\n", exprStr);
-    std::cout << std::format("Canonical:    {}\n", serialized);
-    std::cout << std::format("SHA256 Hash:  {}\n\n", hash);
+    std::cout << "Expression:   " << exprStr << "\nSHA256 Hash:  " << hash
+              << "\n\n";
 
-    for (int i = 0; i < varCount; ++i) {
-        std::cout << static_cast<char>('A' + i) << ' ';
+    auto rootExpr = Parser(exprStr, varCount).parse();
+
+    std::unordered_set<int> usedSet;
+    usedSet.reserve(varCount);
+    rootExpr->collectVars(usedSet);
+
+    std::vector<int> usedIndices(usedSet.begin(), usedSet.end());
+    std::sort(usedIndices.begin(), usedIndices.end());
+    int k = static_cast<int>(usedIndices.size());
+
+    for (int idx : usedIndices) {
+        std::cout << varName(idx) << ' ';
     }
     std::cout << "| Out\n";
-    std::cout << std::string(varCount * 2 + 3, '-') << "\n";
+    std::cout << std::string(k * 2 + 3, '-') << "\n";
 
-    const int totalRows = 1 << varCount;
-    std::vector<bool> inputs(varCount);
+    uint64_t totalRows = (uint64_t)1 << k;
+    std::vector<uint8_t> fullInputs(varCount, 0);
+    std::vector<uint8_t> subInputs(k, 0);
 
-    for (int row : std::ranges::views::iota(0, totalRows)) {
-        for (int bit = 0; bit < varCount; ++bit) {
-            inputs[bit] = static_cast<bool>((row >> (varCount - 1 - bit)) & 1);
+    for (uint64_t mask = 0; mask < totalRows; ++mask) {
+        for (int bit = 0; bit < k; ++bit) {
+            subInputs[bit] =
+                static_cast<uint8_t>((mask >> (k - 1 - bit)) & 1ULL);
         }
-        for (bool b : inputs) {
-            std::cout << b << ' ';
+        std::fill(fullInputs.begin(), fullInputs.end(), 0);
+        for (int i = 0; i < k; ++i) {
+            fullInputs[usedIndices[i]] = subInputs[i];
         }
-        bool result = canonicalExpr->eval(inputs);
-        std::cout << "|  " << result << '\n';
+        for (int i = 0; i < k; ++i) {
+            std::cout << bitChar(subInputs[i]) << ' ';
+        }
+        bool out = rootExpr->eval(fullInputs);
+        std::cout << "|  " << bitChar(out) << "\n";
     }
-
     return 0;
 }
