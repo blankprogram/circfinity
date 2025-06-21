@@ -1,7 +1,13 @@
 #include <algorithm>
-#include <fstream>
+#include <cstring>
+#include <fcntl.h>
 #include <iostream>
+#include <stdexcept>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <tuple>
+#include <unistd.h>
 #include <vector>
 
 int maxVar;
@@ -9,7 +15,6 @@ std::vector<uint64_t> P;
 std::vector<std::vector<uint64_t>> B;
 std::vector<std::vector<std::vector<uint64_t>>> C;
 std::vector<std::vector<std::vector<uint64_t>>> patternDP;
-
 std::vector<int> flatTrees;
 std::vector<std::tuple<int, int, int>> treeIndex;
 std::vector<std::vector<int>> leafCount;
@@ -103,79 +108,113 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    std::ifstream in("tables.bin", std::ios::binary);
-    if (!in) {
-        std::cerr << "Error: cannot open tables.bin\n";
+    // -- mmap --
+    int fd = open("tables.bin", O_RDONLY);
+    if (fd < 0) {
+        perror("open");
         return 1;
     }
 
-    size_t Psize;
-    in.read((char *)&Psize, sizeof(size_t));
+    struct stat sb;
+    if (fstat(fd, &sb) < 0) {
+        perror("fstat");
+        return 1;
+    }
+
+    size_t size = sb.st_size;
+    void *mapped = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (mapped == MAP_FAILED) {
+        perror("mmap");
+        return 1;
+    }
+
+    close(fd);
+
+    // -- parse in place --
+    char *ptr = reinterpret_cast<char *>(mapped);
+    auto read_size_t = [&]() {
+        size_t v;
+        std::memcpy(&v, ptr, sizeof(size_t));
+        ptr += sizeof(size_t);
+        return v;
+    };
+    auto read_uint64 = [&]() {
+        uint64_t v;
+        std::memcpy(&v, ptr, sizeof(uint64_t));
+        ptr += sizeof(uint64_t);
+        return v;
+    };
+    auto read_int = [&]() {
+        int v;
+        std::memcpy(&v, ptr, sizeof(int));
+        ptr += sizeof(int);
+        return v;
+    };
+
+    size_t Psize = read_size_t();
     P.resize(Psize);
-    in.read((char *)P.data(), sizeof(uint64_t) * Psize);
+    std::memcpy(P.data(), ptr, sizeof(uint64_t) * Psize);
+    ptr += sizeof(uint64_t) * Psize;
 
     B.resize(Psize - 1);
     for (auto &row : B) {
-        size_t R;
-        in.read((char *)&R, sizeof(size_t));
+        size_t R = read_size_t();
         row.resize(R);
-        in.read((char *)row.data(), sizeof(uint64_t) * R);
+        std::memcpy(row.data(), ptr, sizeof(uint64_t) * R);
+        ptr += sizeof(uint64_t) * R;
     }
 
     C.resize(Psize - 1);
     for (auto &mat : C) {
-        size_t M;
-        in.read((char *)&M, sizeof(size_t));
+        size_t M = read_size_t();
         mat.resize(M);
         for (auto &row : mat) {
-            size_t R;
-            in.read((char *)&R, sizeof(size_t));
+            size_t R = read_size_t();
             row.resize(R);
-            in.read((char *)row.data(), sizeof(uint64_t) * R);
+            std::memcpy(row.data(), ptr, sizeof(uint64_t) * R);
+            ptr += sizeof(uint64_t) * R;
         }
     }
 
-    size_t pdpSize;
-    in.read((char *)&pdpSize, sizeof(size_t));
+    size_t pdpSize = read_size_t();
     patternDP.resize(pdpSize);
     for (auto &pk : patternDP) {
-        size_t M;
-        in.read((char *)&M, sizeof(size_t));
+        size_t M = read_size_t();
         pk.resize(M);
         for (auto &pm : pk) {
-            size_t R;
-            in.read((char *)&R, sizeof(size_t));
+            size_t R = read_size_t();
             pm.resize(R);
-            in.read((char *)pm.data(), sizeof(uint64_t) * R);
+            std::memcpy(pm.data(), ptr, sizeof(uint64_t) * R);
+            ptr += sizeof(uint64_t) * R;
         }
     }
 
-    size_t flatSize;
-    in.read((char *)&flatSize, sizeof(size_t));
+    size_t flatSize = read_size_t();
     flatTrees.resize(flatSize);
-    in.read((char *)flatTrees.data(), sizeof(int) * flatSize);
+    std::memcpy(flatTrees.data(), ptr, sizeof(int) * flatSize);
+    ptr += sizeof(int) * flatSize;
 
-    size_t indexSize;
-    in.read((char *)&indexSize, sizeof(size_t));
+    size_t indexSize = read_size_t();
     treeIndex.resize(indexSize);
     for (auto &[d, s, offset] : treeIndex) {
-        in.read((char *)&d, sizeof(int));
-        in.read((char *)&s, sizeof(int));
-        in.read((char *)&offset, sizeof(int));
+        d = read_int();
+        s = read_int();
+        offset = read_int();
     }
 
     leafCount.resize(Psize - 1);
     for (auto &row : leafCount) {
-        size_t R;
-        in.read((char *)&R, sizeof(size_t));
+        size_t R = read_size_t();
         row.resize(R);
-        in.read((char *)row.data(), sizeof(int) * R);
+        std::memcpy(row.data(), ptr, sizeof(int) * R);
+        ptr += sizeof(int) * R;
     }
 
-    in.close();
     maxVar = int(C[0][0].size()) - 1;
 
     uint64_t n = std::stoull(argv[1]);
     std::cout << "Expr #" << n << ": " << generateNthCanonicalExpr(n) << "\n";
+
+    munmap(mapped, size);
     return 0;
 }
