@@ -35,15 +35,18 @@ BigInt countShapes(int d) {
     BigInt total = (d == 0 ? 1 : 0);
     if (d > 0) {
         total += countShapes(d - 1);
-        for (int d1 = 0; d1 < d; ++d1) {
+        for (int d1 = 0; d1 <= d - 1; ++d1) {
             int d2 = d - 1 - d1;
-            BigInt c1 = countShapes(d1), c2 = countShapes(d2), block;
-            if (d1 < d2)
-                block = c1 * c2;
-            else if (d1 == d2)
-                block = (c1 * (c1 + 1)) / 2;
-            else
+            if (d1 > d2)
                 continue;
+            BigInt c1 = countShapes(d1);
+            BigInt c2 = countShapes(d2);
+            BigInt block;
+            if (d1 < d2) {
+                block = (c1 * c2 + 1) / 2;
+            } else {
+                block = (c1 * (c1 + 1)) / 2;
+            }
             total += block * 3;
         }
     }
@@ -55,43 +58,62 @@ int buildShape(const BigInt &idx, int d) {
         nodes.push_back({0, 0, 0, 0});
         return nodes.size() - 1;
     }
-    BigInt rem = idx, prev = countShapes(d - 1);
-    if (rem < prev) {
+    BigInt rem = idx;
+    BigInt notCount = countShapes(d - 1);
+    if (rem < notCount) {
         int c = buildShape(rem, d - 1);
         nodes.push_back({1, c, 0, 0});
         return nodes.size() - 1;
     }
-    rem -= prev;
+    rem -= notCount;
+
     for (int op = 0; op < 3; ++op) {
-        for (int d1 = 0; d1 < d; ++d1) {
+        for (int d1 = 0; d1 <= d - 1; ++d1) {
             int d2 = d - 1 - d1;
-            BigInt c1 = countShapes(d1), c2 = countShapes(d2), block;
-            if (d1 < d2)
-                block = c1 * c2;
-            else if (d1 == d2)
-                block = (c1 * (c1 + 1)) / 2;
-            else
+            if (d1 > d2)
                 continue;
-            if (rem < block) {
-                int i1, i2;
-                if (d1 < d2) {
-                    i1 = (rem / c2).convert_to<int>();
-                    i2 = (rem % c2).convert_to<int>();
-                } else {
+
+            BigInt c1 = countShapes(d1);
+            BigInt c2 = countShapes(d2);
+            BigInt block;
+            if (d1 < d2) {
+                block = (c1 * c2 + 1) / 2;
+                if (rem < block) {
+                    BigInt p = rem;
+                    int i1 = 0;
+                    while (p >= (c2 - i1)) {
+                        p -= (c2 - i1);
+                        ++i1;
+                    }
+                    int i2 = i1 + p.convert_to<int>();
+                    int L = buildShape(i1, d1);
+                    int R = buildShape(i2, d2);
+                    if (L > R)
+                        std::swap(L, R);
+                    nodes.push_back({2, L, R, op});
+                    return nodes.size() - 1;
+                }
+                rem -= block;
+            } else {
+                block = (c1 * (c1 + 1)) / 2;
+                if (rem < block) {
                     BigInt p = rem;
                     int i = 0;
                     while (p >= (c1 - i)) {
                         p -= (c1 - i);
                         ++i;
                     }
-                    i1 = i;
-                    i2 = i + p.convert_to<int>();
+                    int i1 = i;
+                    int i2 = i + p.convert_to<int>();
+                    int L = buildShape(i1, d1);
+                    int R = buildShape(i2, d2);
+                    if (L > R)
+                        std::swap(L, R);
+                    nodes.push_back({2, L, R, op});
+                    return nodes.size() - 1;
                 }
-                int L = buildShape(i1, d1), R = buildShape(i2, d2);
-                nodes.push_back({2, L, R, op});
-                return nodes.size() - 1;
+                rem -= block;
             }
-            rem -= block;
         }
     }
     throw std::out_of_range("buildShape overflow");
