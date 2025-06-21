@@ -2,6 +2,7 @@
 #include <boost/multiprecision/cpp_int.hpp>
 #include <fstream>
 #include <iostream>
+#include <tuple>
 #include <vector>
 
 using BigInt = boost::multiprecision::cpp_int;
@@ -16,7 +17,9 @@ std::vector<std::vector<uint64_t>> B;
 std::vector<uint64_t> P(MAX_DEPTH + 2);
 std::vector<std::vector<BigInt>> stirling;
 std::vector<std::vector<std::vector<uint64_t>>> patternDP;
-std::vector<std::vector<std::vector<std::vector<int>>>> trees;
+
+std::vector<int> flatTrees;
+std::vector<std::tuple<int, int, int>> treeIndex;
 
 struct Node {
     int kind, l, r, op;
@@ -135,28 +138,30 @@ void precomputePatternDP(int ML, int MV) {
 int main() {
     for (int d = 0; d <= MAX_DEPTH; ++d)
         shapes[d] = countShapes(d);
+
     leafCount.resize(MAX_DEPTH + 1);
     B.resize(MAX_DEPTH + 1);
-    trees.resize(MAX_DEPTH + 1);
     C.resize(MAX_DEPTH + 1);
-    int ML = 0;
 
+    int ML = 0;
     for (int d = 0; d <= MAX_DEPTH; ++d) {
         size_t S = shapes[d].convert_to<size_t>();
         leafCount[d].resize(S);
         B[d].resize(S + 1);
         B[d][0] = 0;
-        trees[d].resize(S);
         for (size_t s = 0; s < S; ++s) {
             nodes.clear();
             int root = buildShape(BigInt(s), d);
             int k = countLeaves(root);
             leafCount[d][s] = k;
             ML = std::max(ML, k);
-            std::vector<std::vector<int>> tree;
+
+            int offset = flatTrees.size();
+            flatTrees.push_back(nodes.size());
             for (const auto &n : nodes)
-                tree.push_back({n.kind, n.l, n.r, n.op});
-            trees[d][s] = tree;
+                flatTrees.push_back(n.kind), flatTrees.push_back(n.l),
+                    flatTrees.push_back(n.r), flatTrees.push_back(n.op);
+            treeIndex.emplace_back(d, int(s), offset);
         }
     }
 
@@ -213,15 +218,16 @@ int main() {
         }
     }
 
-    for (const auto &td : trees) {
-        size_t S = td.size();
-        out.write((char *)&S, sizeof(size_t));
-        for (const auto &ts : td) {
-            size_t N = ts.size();
-            out.write((char *)&N, sizeof(size_t));
-            for (const auto &node : ts)
-                out.write((char *)node.data(), sizeof(int) * 4);
-        }
+    size_t flatSize = flatTrees.size();
+    out.write((char *)&flatSize, sizeof(size_t));
+    out.write((char *)flatTrees.data(), sizeof(int) * flatSize);
+
+    size_t indexSize = treeIndex.size();
+    out.write((char *)&indexSize, sizeof(size_t));
+    for (const auto &[d, s, offset] : treeIndex) {
+        out.write((char *)&d, sizeof(int));
+        out.write((char *)&s, sizeof(int));
+        out.write((char *)&offset, sizeof(int));
     }
 
     for (const auto &row : leafCount) {
@@ -231,6 +237,6 @@ int main() {
     }
 
     out.close();
-    std::cout << "Precompute done\n";
+    std::cout << "✅ Precompute done → tables.bin\n";
     return 0;
 }
