@@ -1,203 +1,207 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <fstream>
+#include <cstring>
+#include <fcntl.h>
 #include <iostream>
-#include <map>
-#include <string>
+#include <string_view>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
-template <std::size_t N>
-consteval std::array<uint64_t, N + 2> make_bell_array_plus1() {
-    std::array<uint64_t, N + 2> B{};
-    std::array<uint64_t, N + 2> prev{};
-    std::array<uint64_t, N + 2> row{};
-    B[0] = 1;
-    prev[0] = 1;
-
+template <std::size_t N> consteval std::array<uint64_t, N + 2> make_bell() {
+    std::array<uint64_t, N + 2> B{}, prev{}, row{};
+    B[0] = prev[0] = 1;
     for (std::size_t n = 1; n <= N + 1; ++n) {
         row[0] = prev[n - 1];
-
-        for (std::size_t k = 1; k <= n; ++k) {
+        for (std::size_t k = 1; k <= n; ++k)
             row[k] = row[k - 1] + prev[k - 1];
-        }
-
         B[n] = row[0];
-
-        for (std::size_t k = 0; k <= n; ++k) {
+        for (std::size_t k = 0; k <= n; ++k)
             prev[k] = row[k];
-        }
     }
-
     return B;
 }
 
-static constexpr int MAX_SIZE = 22;
-static constexpr auto Bell = make_bell_array_plus1<MAX_SIZE>();
-
-static constexpr std::array<long long, MAX_SIZE + 1> Pow3 = [] {
-    std::array<long long, MAX_SIZE + 1> a{};
-    a[0] = 1;
-    for (int i = 1; i <= MAX_SIZE; ++i)
-        a[i] = a[i - 1] * 3;
-    return a;
-}();
+static constexpr int MAX_SIZE = 23;
+static constexpr auto Bell = make_bell<MAX_SIZE>();
 
 struct Node {
-    uint8_t type;
-    uint8_t numBinary;
-    uint8_t childSize;
-    uint8_t rightSize;
+    uint8_t type, numBinary, childSize, rightSize;
     uint32_t child, left, right;
 };
 
 class ExpressionGenerator {
-    std::array<std::vector<Node>, MAX_SIZE + 1> nodesPool;
-    std::array<std::vector<uint32_t>, MAX_SIZE + 1> roots;
-    std::array<std::vector<long long>, MAX_SIZE + 1> prefix;
-    std::array<long long, MAX_SIZE + 1> cumulativeTotal;
+    int _fd{};
+    size_t _fileSize{};
+    const char *_data{};
 
-    mutable std::map<int, std::vector<std::vector<int>>> rgs_cache;
-    void generate_rgs(int i, int m, int k, std::vector<int> &cur,
-                      std::vector<std::vector<int>> &out) const {
+    std::array<const Node *, MAX_SIZE + 1> _nodesPool;
+    std::array<const uint32_t *, MAX_SIZE + 1> _roots;
+    std::array<const long long *, MAX_SIZE + 1> _prefix;
+    std::array<size_t, MAX_SIZE + 1> _shapeCount;
+    std::array<long long, MAX_SIZE + 1> _cumTotal;
+
+    mutable std::array<std::vector<std::vector<int>>, MAX_SIZE + 2> _rgsCache;
+    mutable std::array<int, MAX_SIZE> _tmpOp{};
+    mutable std::array<int, 64> _stamp{};
+    mutable std::array<char, 64> _chMap{};
+    mutable int _curStamp{1};
+    mutable std::array<char, 4096> _outBuf;
+    mutable size_t _outLen{0};
+
+    void generateRgs(int i, int m, int k, std::vector<int> &cur,
+                     std::vector<std::vector<int>> &out) const {
         if (i == k) {
             out.push_back(cur);
             return;
         }
         for (int j = 0; j <= m + 1; ++j) {
             cur.push_back(j);
-            generate_rgs(i + 1, std::max(m, j), k, cur, out);
+            generateRgs(i + 1, std::max(m, j), k, cur, out);
             cur.pop_back();
         }
     }
 
-    std::vector<int> unrank_rgs(int k, long long idx) const {
-        if (k == 0)
-            return {};
-        auto &C = rgs_cache[k];
-        if (C.empty()) {
-            std::vector<std::vector<int>> all;
-            std::vector<int> cur{0};
-            generate_rgs(1, 0, k, cur, all);
-            C = std::move(all);
-        }
-        if (idx < 0 || idx >= (long long)C.size())
-            return std::vector<int>(k, 0);
-        return C[idx];
-    }
-
-    std::string build_expression(int s, uint32_t ni,
-                                 const std::vector<int> &opd, int &opi,
-                                 const std::vector<std::string> &vars,
-                                 int &leafi) const {
-        const Node &n = nodesPool[s][ni];
-        if (n.type == 0) {
-            return vars[leafi++];
-        }
-        if (n.type == 1) {
-            auto c =
-                build_expression(n.childSize, n.child, opd, opi, vars, leafi);
-            return "NOT(" + c + ")";
-        }
-        int d = opd[opi++];
-        static constexpr const char *OP_STR[3] = {"AND", "OR", "XOR"};
-        auto L = build_expression(n.childSize, n.left, opd, opi, vars, leafi);
-        auto R = build_expression(n.rightSize, n.right, opd, opi, vars, leafi);
-        return std::string(OP_STR[d]) + "(" + L + "," + R + ")";
-    }
-
   public:
-    ExpressionGenerator() {
-        std::ifstream in("precomputed_data.bin", std::ios::binary);
-        if (!in) {
-            std::cerr << "Cannot open data\n";
-            std::exit(1);
+    ExpressionGenerator(const char *path = "precomputed_data.bin") {
+        _fd = open(path, O_RDONLY);
+        if (_fd < 0) {
+            perror("open");
+            exit(1);
+        }
+        struct stat st;
+        fstat(_fd, &st);
+        _fileSize = st.st_size;
+        _data = static_cast<const char *>(
+            mmap(nullptr, _fileSize, PROT_READ, MAP_PRIVATE, _fd, 0));
+        if (_data == MAP_FAILED) {
+            perror("mmap");
+            exit(1);
         }
 
+        const char *ptr = _data;
         for (int s = 1; s <= MAX_SIZE; ++s) {
-            uint32_t nodeCount;
-            in.read(reinterpret_cast<char *>(&nodeCount), sizeof(nodeCount));
-            nodesPool[s].reserve(nodeCount);
-            nodesPool[s].resize(nodeCount);
-            in.read(reinterpret_cast<char *>(nodesPool[s].data()),
-                    nodeCount * sizeof(Node));
-
-            uint32_t shapeCount;
-            in.read(reinterpret_cast<char *>(&shapeCount), sizeof(shapeCount));
-            roots[s].reserve(shapeCount);
-            roots[s].resize(shapeCount);
-            in.read(reinterpret_cast<char *>(roots[s].data()),
-                    shapeCount * sizeof(uint32_t));
-
-            prefix[s].reserve(shapeCount);
-            prefix[s].resize(shapeCount);
-            in.read(reinterpret_cast<char *>(prefix[s].data()),
-                    shapeCount * sizeof(long long));
+            uint32_t nc = *reinterpret_cast<const uint32_t *>(ptr);
+            ptr += 4;
+            _nodesPool[s] = reinterpret_cast<const Node *>(ptr);
+            ptr += nc * sizeof(Node);
+            uint32_t sc = *reinterpret_cast<const uint32_t *>(ptr);
+            ptr += 4;
+            _roots[s] = reinterpret_cast<const uint32_t *>(ptr);
+            ptr += sc * sizeof(uint32_t);
+            _prefix[s] = reinterpret_cast<const long long *>(ptr);
+            ptr += sc * sizeof(long long);
+            _shapeCount[s] = sc;
         }
-
-        cumulativeTotal[0] = 0;
+        _cumTotal[0] = 0;
         for (int s = 1; s <= MAX_SIZE; ++s) {
-            in.read(reinterpret_cast<char *>(&cumulativeTotal[s]),
-                    sizeof(long long));
+            _cumTotal[s] = *reinterpret_cast<const long long *>(ptr);
+            ptr += sizeof(long long);
         }
     }
 
-    long long maxIndex() const { return cumulativeTotal[MAX_SIZE]; }
+    ~ExpressionGenerator() {
+        munmap(const_cast<char *>(_data), _fileSize);
+        close(_fd);
+    }
 
-    std::string get_expression(long long n) const {
-        if (n < 1 || n > maxIndex())
+    long long totalExpressions() const { return _cumTotal[MAX_SIZE]; }
+
+    std::string_view get_expression(long long n) const {
+        if (n < 1 || n > _cumTotal[MAX_SIZE])
             return "ERROR";
 
-        int s = int(std::upper_bound(cumulativeTotal.begin() + 1,
-                                     cumulativeTotal.begin() + MAX_SIZE + 1,
-                                     n - 1) -
-                    cumulativeTotal.begin());
-        long long base = cumulativeTotal[s - 1];
+        int s = 1;
+        while (_cumTotal[s] < n)
+            ++s;
+        long long base = _cumTotal[s - 1];
         long long offset = n - (base + 1);
 
-        const auto &P = prefix[s];
-        auto it = std::lower_bound(P.begin(), P.end(), offset + 1);
-        int idxShape = int(it - P.begin());
-        long long prev = idxShape ? P[idxShape - 1] : 0;
+        const long long *Pfx = _prefix[s];
+        int sc = _shapeCount[s];
+        int idxSh = 0;
+        while (Pfx[idxSh] < offset + 1)
+            ++idxSh;
+        long long prev = idxSh ? Pfx[idxSh - 1] : 0;
         long long resid = offset - prev;
 
-        uint32_t rootIdx = roots[s][idxShape];
-        int b = nodesPool[s][rootIdx].numBinary;
+        const Node *Np = _nodesPool[s];
+        const uint32_t *Rts = _roots[s];
+        uint32_t rootIdx = Rts[idxSh];
+        int b = Np[rootIdx].numBinary;
 
         long long varCount = Bell[b + 1];
-        long long op_index = resid / varCount;
-        long long var_index = resid % varCount;
-
-        std::vector<int> opd(b);
+        long long opv = resid / varCount;
+        long long varIdx = resid % varCount;
         for (int i = b - 1; i >= 0; --i) {
-            opd[i] = int(op_index % 3);
-            op_index /= 3;
+            _tmpOp[i] = int(opv % 3);
+            opv /= 3;
         }
 
-        auto rgs = unrank_rgs(b + 1, var_index);
-        std::map<int, char> blk2ch;
-        std::vector<std::string> vars(b + 1);
+        auto &rgsList = _rgsCache[b + 1];
+        if (rgsList.empty()) {
+            std::vector<int> cur{0};
+            rgsList.reserve(Bell[b + 1]);
+            generateRgs(1, 0, b + 1, cur, rgsList);
+        }
+        const auto &rgs = rgsList[varIdx];
+
         char next = 'A';
+        ++_curStamp;
         for (int i = 0; i < b + 1; ++i) {
-            if (!blk2ch.count(rgs[i]))
-                blk2ch[rgs[i]] = next++;
-            vars[i] = std::string(1, blk2ch[rgs[i]]);
+            int blk = rgs[i];
+            if (_stamp[blk] != _curStamp) {
+                _stamp[blk] = _curStamp;
+                _chMap[blk] = next++;
+            }
         }
 
-        int opi = 0, leafi = 0;
-        return build_expression(s, rootIdx, opd, opi, vars, leafi);
+        _outLen = 0;
+        int leafIdx = 0;
+        build(Np, rootIdx, b, rgs.data(), 0, leafIdx);
+        return {_outBuf.data(), _outLen};
+    }
+
+  private:
+    void build(const Node *Np, uint32_t ni, int b, const int *rgs, int opi,
+               int &leafIdx) const {
+        const Node &n = Np[ni];
+        if (n.type == 0) {
+            _outBuf[_outLen++] = _chMap[rgs[leafIdx++]];
+            return;
+        }
+        if (n.type == 1) {
+            memcpy(_outBuf.data() + _outLen, "NOT(", 4);
+            _outLen += 4;
+            build(_nodesPool[n.childSize], n.child, b, rgs, opi, leafIdx);
+            _outBuf[_outLen++] = ')';
+            return;
+        }
+        int op = _tmpOp[opi];
+        const char *lit = (op == 0 ? "AND" : op == 1 ? "OR" : "XOR");
+        size_t len = (op == 1 ? 2 : 3);
+        memcpy(_outBuf.data() + _outLen, lit, len);
+        _outLen += len;
+        _outBuf[_outLen++] = '(';
+        build(_nodesPool[n.childSize], n.left, b, rgs, opi + 1, leafIdx);
+        _outBuf[_outLen++] = ',';
+        build(_nodesPool[n.rightSize], n.right, b, rgs, opi + 1, leafIdx);
+        _outBuf[_outLen++] = ')';
     }
 };
 
 int main() {
     ExpressionGenerator gen;
     long long n = 100;
-    long long num = 1'000'000'000;
-    long long max = gen.maxIndex();
-    for (int i = 1; i <= n; ++i)
+    long long max = gen.totalExpressions();
+    for (long long i = 1; i <= n; ++i) {
         std::cout << "#" << i << ": " << gen.get_expression(i) << "\n";
-    std::cout << "#" << num << ": " << gen.get_expression(num) << "\n";
+    }
+
     std::cout << "#" << max << ": " << gen.get_expression(max) << "\n";
-    std::cout << "Max=" << max << "\n";
+
+    std::cout << "Total expressions: " << max << "\n";
     return 0;
 }
