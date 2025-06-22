@@ -34,8 +34,6 @@ std::string emitPatterned(int id, const std::vector<int> &pat, int &p) {
         return "NOT(" + emitPatterned(n.l, pat, p) + ")";
     std::string L = emitPatterned(n.l, pat, p);
     std::string R = emitPatterned(n.r, pat, p);
-    if (L > R)
-        std::swap(L, R);
     return std::string(OP_NAMES[n.op]) + "(" + L + "," + R + ")";
 }
 
