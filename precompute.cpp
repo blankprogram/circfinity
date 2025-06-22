@@ -1,264 +1,130 @@
-#include <algorithm>
-#include <boost/multiprecision/cpp_int.hpp>
+#include <array>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
-#include <tuple>
+#include <numeric>
 #include <vector>
 
-using BigInt = boost::multiprecision::cpp_int;
+static constexpr int MAX_SIZE = 20;
 
-constexpr int MAX_DEPTH = 8;
-constexpr int MAX_VAR = 5;
+static constexpr std::array<long long, MAX_SIZE + 2> Bell = {
+    1LL,              // B0
+    1LL,              // B1
+    2LL,              // B2
+    5LL,              // B3
+    15LL,             // B4
+    52LL,             // B5
+    203LL,            // B6
+    877LL,            // B7
+    4140LL,           // B8
+    21147LL,          // B9
+    115975LL,         // B10
+    678570LL,         // B11
+    4213597LL,        // B12
+    27644437LL,       // B13
+    190899322LL,      // B14
+    1382958545LL,     // B15
+    10480142147LL,    // B16
+    82864869804LL,    // B17
+    682076806159LL,   // B18
+    5832742205057LL,  // B19
+    51724158235372LL, // B20
+    474869816156751LL // B21
+};
 
-std::vector<BigInt> shapes(MAX_DEPTH + 1);
-std::vector<std::vector<int>> leafCount;
-std::vector<std::vector<std::vector<uint64_t>>> C;
-std::vector<std::vector<uint64_t>> B;
-std::vector<uint64_t> P(MAX_DEPTH + 2);
-std::vector<std::vector<BigInt>> stirling;
-std::vector<std::vector<std::vector<uint64_t>>> patternDP;
-
-std::vector<int> flatTrees;
-std::vector<std::tuple<int, int, int>> treeIndex;
+static constexpr std::array<long long, MAX_SIZE + 1> Pow3 = []() {
+    std::array<long long, MAX_SIZE + 1> a{};
+    a[0] = 1;
+    for (int i = 1; i <= MAX_SIZE; ++i)
+        a[i] = a[i - 1] * 3;
+    return a;
+}();
 
 struct Node {
-    int kind, l, r, op;
+    uint8_t type;
+    uint8_t numBinary;
+    uint8_t childSize;
+    uint8_t rightSize;
+    uint32_t child, left, right;
 };
-std::vector<Node> nodes;
-
-BigInt countShapes(int d) {
-    static std::vector<BigInt> cache(MAX_DEPTH + 1, -1);
-    if (d < 0)
-        return 0;
-    if (cache[d] != -1)
-        return cache[d];
-    BigInt total = (d == 0 ? 1 : 0);
-    if (d > 0) {
-        total += countShapes(d - 1);
-        for (int d1 = 0; d1 <= d - 1; ++d1) {
-            int d2 = d - 1 - d1;
-            if (d1 > d2)
-                continue;
-            BigInt c1 = countShapes(d1);
-            BigInt c2 = countShapes(d2);
-            BigInt block;
-            if (d1 < d2) {
-                block = (c1 * c2 + 1) / 2;
-            } else {
-                block = (c1 * (c1 + 1)) / 2;
-            }
-            total += block * 3;
-        }
-    }
-    return cache[d] = total;
-}
-
-int buildShape(const BigInt &idx, int d) {
-    if (d == 0) {
-        nodes.push_back({0, 0, 0, 0});
-        return nodes.size() - 1;
-    }
-    BigInt rem = idx;
-    BigInt notCount = countShapes(d - 1);
-    if (rem < notCount) {
-        int c = buildShape(rem, d - 1);
-        nodes.push_back({1, c, 0, 0});
-        return nodes.size() - 1;
-    }
-    rem -= notCount;
-
-    for (int op = 0; op < 3; ++op) {
-        for (int d1 = 0; d1 <= d - 1; ++d1) {
-            int d2 = d - 1 - d1;
-            if (d1 > d2)
-                continue;
-
-            BigInt c1 = countShapes(d1);
-            BigInt c2 = countShapes(d2);
-            BigInt block;
-            if (d1 < d2) {
-                block = (c1 * c2 + 1) / 2;
-                if (rem < block) {
-                    BigInt p = rem;
-                    int i1 = 0;
-                    while (p >= (c2 - i1)) {
-                        p -= (c2 - i1);
-                        ++i1;
-                    }
-                    int i2 = i1 + p.convert_to<int>();
-                    int L = buildShape(i1, d1);
-                    int R = buildShape(i2, d2);
-                    if (L > R)
-                        std::swap(L, R);
-                    nodes.push_back({2, L, R, op});
-                    return nodes.size() - 1;
-                }
-                rem -= block;
-            } else {
-                block = (c1 * (c1 + 1)) / 2;
-                if (rem < block) {
-                    BigInt p = rem;
-                    int i = 0;
-                    while (p >= (c1 - i)) {
-                        p -= (c1 - i);
-                        ++i;
-                    }
-                    int i1 = i;
-                    int i2 = i + p.convert_to<int>();
-                    int L = buildShape(i1, d1);
-                    int R = buildShape(i2, d2);
-                    if (L > R)
-                        std::swap(L, R);
-                    nodes.push_back({2, L, R, op});
-                    return nodes.size() - 1;
-                }
-                rem -= block;
-            }
-        }
-    }
-    throw std::out_of_range("buildShape overflow");
-}
-
-int countLeaves(int id) {
-    const auto &n = nodes[id];
-    if (n.kind == 0)
-        return 1;
-    if (n.kind == 1)
-        return countLeaves(n.l);
-    return countLeaves(n.l) + countLeaves(n.r);
-}
-
-void precomputeStirling(int ML, int MV) {
-    stirling.assign(ML + 1, std::vector<BigInt>(MV + 1, 0));
-    stirling[0][0] = 1;
-    for (int k = 1; k <= ML; ++k)
-        for (int m = 1; m <= MV; ++m)
-            stirling[k][m] =
-                BigInt(m) * stirling[k - 1][m] + stirling[k - 1][m - 1];
-}
-
-void precomputePatternDP(int ML, int MV) {
-    patternDP.resize(ML + 1);
-    for (int k = 0; k <= ML; ++k) {
-        patternDP[k].resize(MV + 1);
-        for (int m = 1; m <= MV; ++m) {
-            std::vector<uint64_t> dp((k + 1) * (MV + 1), 0);
-            auto Pdp = [&](int i, int u) -> uint64_t & {
-                return dp[i * (MV + 1) + u];
-            };
-            for (int u = 0; u <= MV; ++u)
-                Pdp(k, u) = (u == m ? 1 : 0);
-            for (int i = k - 1; i >= 0; --i)
-                for (int u = 0; u <= m; ++u)
-                    Pdp(i, u) =
-                        u * Pdp(i + 1, u) + (u < m ? Pdp(i + 1, u + 1) : 0);
-            patternDP[k][m] = dp;
-        }
-    }
-}
 
 int main() {
-    for (int d = 0; d <= MAX_DEPTH; ++d)
-        shapes[d] = countShapes(d);
+    std::array<std::vector<Node>, MAX_SIZE + 1> nodesPool;
+    std::array<std::vector<uint32_t>, MAX_SIZE + 1> roots;
+    std::array<std::vector<long long>, MAX_SIZE + 1> weights;
+    std::array<long long, MAX_SIZE + 1> cumulativeTotal{};
 
-    leafCount.resize(MAX_DEPTH + 1);
-    B.resize(MAX_DEPTH + 1);
-    C.resize(MAX_DEPTH + 1);
+    nodesPool[1].push_back({0, 0, 0, 0, 0, 0, 0});
+    roots[1].push_back(0);
+    weights[1].push_back(1);
+    cumulativeTotal[1] = 1;
 
-    int ML = 0;
-    for (int d = 0; d <= MAX_DEPTH; ++d) {
-        size_t S = shapes[d].convert_to<size_t>();
-        leafCount[d].resize(S);
-        B[d].resize(S + 1);
-        B[d][0] = 0;
-        for (size_t s = 0; s < S; ++s) {
-            nodes.clear();
-            int root = buildShape(BigInt(s), d);
-            int k = countLeaves(root);
-            leafCount[d][s] = k;
-            ML = std::max(ML, k);
+    for (int s = 2; s <= MAX_SIZE; ++s) {
+        auto &pool = nodesPool[s];
+        auto &rts = roots[s];
+        auto &w = weights[s];
 
-            int offset = flatTrees.size();
-            flatTrees.push_back(nodes.size());
-            for (const auto &n : nodes)
-                flatTrees.push_back(n.kind), flatTrees.push_back(n.l),
-                    flatTrees.push_back(n.r), flatTrees.push_back(n.op);
-            treeIndex.emplace_back(d, int(s), offset);
-        }
-    }
-
-    precomputeStirling(ML, MAX_VAR);
-    precomputePatternDP(ML, MAX_VAR);
-
-    P[0] = 0;
-    for (int d = 0; d <= MAX_DEPTH; ++d) {
-        size_t S = shapes[d].convert_to<size_t>();
-        C[d].resize(S, std::vector<uint64_t>(MAX_VAR + 1, 0));
-        for (size_t s = 0; s < S; ++s) {
-            int k = leafCount[d][s];
-            uint64_t blk = 0;
-            for (int m = 1; m <= MAX_VAR; ++m) {
-                uint64_t val = stirling[k][m].convert_to<uint64_t>();
-                C[d][s][m] = val;
-                blk += val;
+        for (int ls = 1; ls <= s - 2; ++ls) {
+            int rs = s - 1 - ls;
+            for (auto li : roots[ls]) {
+                for (auto ri : roots[rs]) {
+                    auto const &L = nodesPool[ls][li];
+                    auto const &R = nodesPool[rs][ri];
+                    Node n;
+                    n.type = 2;
+                    n.numBinary = uint8_t(1 + L.numBinary + R.numBinary);
+                    n.childSize = uint8_t(ls);
+                    n.rightSize = uint8_t(rs);
+                    n.left = li;
+                    n.right = ri;
+                    uint32_t idx = uint32_t(pool.size());
+                    pool.push_back(n);
+                    rts.push_back(idx);
+                    w.push_back(Pow3[n.numBinary] * Bell[n.numBinary + 1]);
+                }
             }
-            B[d][s + 1] = B[d][s] + blk;
         }
-        P[d + 1] = P[d] + B[d][S];
-    }
 
-    std::ofstream out("tables.bin", std::ios::binary);
-    size_t Psize = P.size();
-    out.write((char *)&Psize, sizeof(size_t));
-    out.write((char *)P.data(), sizeof(uint64_t) * Psize);
-
-    for (const auto &row : B) {
-        size_t R = row.size();
-        out.write((char *)&R, sizeof(size_t));
-        out.write((char *)row.data(), sizeof(uint64_t) * R);
-    }
-
-    for (const auto &mat : C) {
-        size_t M = mat.size();
-        out.write((char *)&M, sizeof(size_t));
-        for (const auto &row : mat) {
-            size_t R = row.size();
-            out.write((char *)&R, sizeof(size_t));
-            out.write((char *)row.data(), sizeof(uint64_t) * R);
+        for (auto ci : roots[s - 1]) {
+            auto const &C = nodesPool[s - 1][ci];
+            Node n;
+            n.type = 1;
+            n.numBinary = C.numBinary;
+            n.childSize = uint8_t(s - 1);
+            n.rightSize = 0;
+            n.child = ci;
+            n.left = n.right = 0;
+            uint32_t idx = uint32_t(pool.size());
+            pool.push_back(n);
+            rts.push_back(idx);
+            w.push_back(Pow3[n.numBinary] * Bell[n.numBinary + 1]);
         }
+
+        std::vector<long long> prefix(w.size());
+        std::inclusive_scan(w.begin(), w.end(), prefix.begin());
+        cumulativeTotal[s] = cumulativeTotal[s - 1] + prefix.back();
     }
 
-    size_t pdpSize = patternDP.size();
-    out.write((char *)&pdpSize, sizeof(size_t));
-    for (const auto &pk : patternDP) {
-        size_t M = pk.size();
-        out.write((char *)&M, sizeof(size_t));
-        for (const auto &pm : pk) {
-            size_t R = pm.size();
-            out.write((char *)&R, sizeof(size_t));
-            out.write((char *)pm.data(), sizeof(uint64_t) * R);
-        }
+    std::ofstream out("precomputed_data.bin", std::ios::binary);
+    if (!out) {
+        std::cerr << "Cannot open precomputed_data.bin\n";
+        return 1;
     }
 
-    size_t flatSize = flatTrees.size();
-    out.write((char *)&flatSize, sizeof(size_t));
-    out.write((char *)flatTrees.data(), sizeof(int) * flatSize);
-
-    size_t indexSize = treeIndex.size();
-    out.write((char *)&indexSize, sizeof(size_t));
-    for (const auto &[d, s, offset] : treeIndex) {
-        out.write((char *)&d, sizeof(int));
-        out.write((char *)&s, sizeof(int));
-        out.write((char *)&offset, sizeof(int));
+    for (int s = 1; s <= MAX_SIZE; ++s) {
+        uint32_t nodeCount = uint32_t(nodesPool[s].size());
+        uint32_t shapeCount = uint32_t(roots[s].size());
+        out.write(reinterpret_cast<char *>(&nodeCount), sizeof(nodeCount));
+        out.write(reinterpret_cast<char *>(nodesPool[s].data()),
+                  nodeCount * sizeof(Node));
+        out.write(reinterpret_cast<char *>(&shapeCount), sizeof(shapeCount));
+        out.write(reinterpret_cast<char *>(roots[s].data()),
+                  shapeCount * sizeof(uint32_t));
+        out.write(reinterpret_cast<char *>(weights[s].data()),
+                  shapeCount * sizeof(long long));
     }
 
-    for (const auto &row : leafCount) {
-        size_t R = row.size();
-        out.write((char *)&R, sizeof(size_t));
-        out.write((char *)row.data(), sizeof(int) * R);
-    }
-
-    out.close();
-    std::cout << "✅ Precompute done → tables.bin\n";
+    out.write(reinterpret_cast<char *>(cumulativeTotal.data() + 1),
+              MAX_SIZE * sizeof(long long));
     return 0;
 }

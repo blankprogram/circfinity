@@ -27,7 +27,7 @@ struct ExprTree {
 };
 
 class ExpressionGenerator {
-    static constexpr int MAX_SIZE = 15;
+    static constexpr int MAX_SIZE = 10;
     int max_leaves;
     vector<vector<shared_ptr<ExprTree>>> trees_by_size;
     vector<long long> bell;
