@@ -4,37 +4,38 @@
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <numeric>
 #include <string>
 #include <vector>
 
-static constexpr int MAX_SIZE = 20;
+template <std::size_t N>
+consteval std::array<uint64_t, N + 2> make_bell_array_plus1() {
+    std::array<uint64_t, N + 2> B{};
+    std::array<uint64_t, N + 2> prev{};
+    std::array<uint64_t, N + 2> row{};
+    B[0] = 1;
+    prev[0] = 1;
 
-static constexpr std::array<long long, MAX_SIZE + 2> Bell = {
-    1LL,              // B0
-    1LL,              // B1
-    2LL,              // B2
-    5LL,              // B3
-    15LL,             // B4
-    52LL,             // B5
-    203LL,            // B6
-    877LL,            // B7
-    4140LL,           // B8
-    21147LL,          // B9
-    115975LL,         // B10
-    678570LL,         // B11
-    4213597LL,        // B12
-    27644437LL,       // B13
-    190899322LL,      // B14
-    1382958545LL,     // B15
-    10480142147LL,    // B16
-    82864869804LL,    // B17
-    682076806159LL,   // B18
-    5832742205057LL,  // B19
-    51724158235372LL, // B20
-    474869816156751LL // B21
-};
-static constexpr std::array<long long, MAX_SIZE + 1> Pow3 = []() {
+    for (std::size_t n = 1; n <= N + 1; ++n) {
+        row[0] = prev[n - 1];
+
+        for (std::size_t k = 1; k <= n; ++k) {
+            row[k] = row[k - 1] + prev[k - 1];
+        }
+
+        B[n] = row[0];
+
+        for (std::size_t k = 0; k <= n; ++k) {
+            prev[k] = row[k];
+        }
+    }
+
+    return B;
+}
+
+static constexpr int MAX_SIZE = 22;
+static constexpr auto Bell = make_bell_array_plus1<MAX_SIZE>();
+
+static constexpr std::array<long long, MAX_SIZE + 1> Pow3 = [] {
     std::array<long long, MAX_SIZE + 1> a{};
     a[0] = 1;
     for (int i = 1; i <= MAX_SIZE; ++i)
@@ -53,7 +54,7 @@ struct Node {
 class ExpressionGenerator {
     std::array<std::vector<Node>, MAX_SIZE + 1> nodesPool;
     std::array<std::vector<uint32_t>, MAX_SIZE + 1> roots;
-    std::array<std::vector<long long>, MAX_SIZE + 1> weights, prefix;
+    std::array<std::vector<long long>, MAX_SIZE + 1> prefix;
     std::array<long long, MAX_SIZE + 1> cumulativeTotal;
 
     mutable std::map<int, std::vector<std::vector<int>>> rgs_cache;
@@ -69,6 +70,7 @@ class ExpressionGenerator {
             cur.pop_back();
         }
     }
+
     std::vector<int> unrank_rgs(int k, long long idx) const {
         if (k == 0)
             return {};
@@ -88,7 +90,7 @@ class ExpressionGenerator {
                                  const std::vector<int> &opd, int &opi,
                                  const std::vector<std::string> &vars,
                                  int &leafi) const {
-        auto const &n = nodesPool[s][ni];
+        const Node &n = nodesPool[s][ni];
         if (n.type == 0) {
             return vars[leafi++];
         }
@@ -98,10 +100,10 @@ class ExpressionGenerator {
             return "NOT(" + c + ")";
         }
         int d = opd[opi++];
-        const char *opn = d == 0 ? "AND" : d == 1 ? "OR" : "XOR";
+        static constexpr const char *OP_STR[3] = {"AND", "OR", "XOR"};
         auto L = build_expression(n.childSize, n.left, opd, opi, vars, leafi);
         auto R = build_expression(n.rightSize, n.right, opd, opi, vars, leafi);
-        return std::string(opn) + "(" + L + "," + R + ")";
+        return std::string(OP_STR[d]) + "(" + L + "," + R + ")";
     }
 
   public:
@@ -112,29 +114,31 @@ class ExpressionGenerator {
             std::exit(1);
         }
 
-        prefix[0].clear();
         for (int s = 1; s <= MAX_SIZE; ++s) {
             uint32_t nodeCount;
-            in.read((char *)&nodeCount, sizeof(nodeCount));
+            in.read(reinterpret_cast<char *>(&nodeCount), sizeof(nodeCount));
+            nodesPool[s].reserve(nodeCount);
             nodesPool[s].resize(nodeCount);
-            in.read((char *)nodesPool[s].data(), nodeCount * sizeof(Node));
+            in.read(reinterpret_cast<char *>(nodesPool[s].data()),
+                    nodeCount * sizeof(Node));
 
             uint32_t shapeCount;
-            in.read((char *)&shapeCount, sizeof(shapeCount));
+            in.read(reinterpret_cast<char *>(&shapeCount), sizeof(shapeCount));
+            roots[s].reserve(shapeCount);
             roots[s].resize(shapeCount);
-            in.read((char *)roots[s].data(), shapeCount * sizeof(uint32_t));
+            in.read(reinterpret_cast<char *>(roots[s].data()),
+                    shapeCount * sizeof(uint32_t));
 
-            weights[s].resize(shapeCount);
-            in.read((char *)weights[s].data(), shapeCount * sizeof(long long));
-
+            prefix[s].reserve(shapeCount);
             prefix[s].resize(shapeCount);
-            std::inclusive_scan(weights[s].begin(), weights[s].end(),
-                                prefix[s].begin());
+            in.read(reinterpret_cast<char *>(prefix[s].data()),
+                    shapeCount * sizeof(long long));
         }
 
         cumulativeTotal[0] = 0;
         for (int s = 1; s <= MAX_SIZE; ++s) {
-            in.read((char *)&cumulativeTotal[s], sizeof(long long));
+            in.read(reinterpret_cast<char *>(&cumulativeTotal[s]),
+                    sizeof(long long));
         }
     }
 
@@ -151,19 +155,18 @@ class ExpressionGenerator {
         long long base = cumulativeTotal[s - 1];
         long long offset = n - (base + 1);
 
-        auto const &P = prefix[s];
+        const auto &P = prefix[s];
         auto it = std::lower_bound(P.begin(), P.end(), offset + 1);
         int idxShape = int(it - P.begin());
         long long prev = idxShape ? P[idxShape - 1] : 0;
-        long long residual = offset - prev;
+        long long resid = offset - prev;
 
         uint32_t rootIdx = roots[s][idxShape];
-        auto const &rt = nodesPool[s][rootIdx];
-        int b = rt.numBinary;
+        int b = nodesPool[s][rootIdx].numBinary;
 
         long long varCount = Bell[b + 1];
-        long long op_index = residual / varCount;
-        long long var_index = residual % varCount;
+        long long op_index = resid / varCount;
+        long long var_index = resid % varCount;
 
         std::vector<int> opd(b);
         for (int i = b - 1; i >= 0; --i) {
@@ -188,14 +191,13 @@ class ExpressionGenerator {
 
 int main() {
     ExpressionGenerator gen;
-
     long long n = 100;
-    long long num = 1000000000;
-    for (int i = 1; i <= n; ++i) {
+    long long num = 1'000'000'000;
+    long long max = gen.maxIndex();
+    for (int i = 1; i <= n; ++i)
         std::cout << "#" << i << ": " << gen.get_expression(i) << "\n";
-    }
-
     std::cout << "#" << num << ": " << gen.get_expression(num) << "\n";
-    std::cout << "Max=" << gen.maxIndex() << "\n";
+    std::cout << "#" << max << ": " << gen.get_expression(max) << "\n";
+    std::cout << "Max=" << max << "\n";
     return 0;
 }
