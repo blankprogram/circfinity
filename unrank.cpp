@@ -1,232 +1,323 @@
 // unrank.cpp
-#include <algorithm>
+// Fully un‐ranks the first 100 Boolean‐formulas of total size ≤ MAX_SIZE,
+// then prints the grand total.  Requires counts.bin (from
+// precompute_counts.cpp).
+
 #include <array>
+#include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
-#include <iostream>
 #include <string_view>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
-template <std::size_t N> consteval std::array<uint64_t, N + 2> make_bell() {
-    std::array<uint64_t, N + 2> B{}, prev{}, row{};
-    B[0] = prev[0] = 1;
-    for (std::size_t n = 1; n <= N + 1; ++n) {
-        row[0] = prev[n - 1];
-        for (std::size_t k = 1; k <= n; ++k)
-            row[k] = row[k - 1] + prev[k - 1];
-        B[n] = row[0];
-        for (std::size_t k = 0; k <= n; ++k)
-            prev[k] = row[k];
+// CONFIGURATION
+static constexpr int MAX_SIZE = 24;
+
+// Bell & 3^b tables
+static consteval std::array<uint64_t, MAX_SIZE + 2> make_bell() {
+    std::array<uint64_t, MAX_SIZE + 2> B{}, p{}, r{};
+    B[0] = p[0] = 1;
+    for (int n = 1; n <= MAX_SIZE + 1; ++n) {
+        r[0] = p[n - 1];
+        for (int k = 1; k <= n; ++k)
+            r[k] = r[k - 1] + p[k - 1];
+        B[n] = r[0];
+        for (int k = 0; k <= n; ++k)
+            p[k] = r[k];
     }
     return B;
 }
+static consteval std::array<uint64_t, MAX_SIZE + 1> make_pow3() {
+    std::array<uint64_t, MAX_SIZE + 1> P{};
+    P[0] = 1;
+    for (int i = 1; i <= MAX_SIZE; ++i)
+        P[i] = P[i - 1] * 3;
+    return P;
+}
+static constexpr auto Bell = make_bell();
+static constexpr auto Pow3 = make_pow3();
 
-static constexpr int MAX_SIZE = 23;
-static constexpr auto Bell = make_bell<MAX_SIZE>();
+// WeightFactor[b] = Bell[b+1] * 3^b
+static constexpr auto WeightFactor = []() {
+    std::array<uint64_t, MAX_SIZE + 1> W{};
+    for (int b = 0; b <= MAX_SIZE; ++b)
+        W[b] = Bell[b + 1] * Pow3[b];
+    return W;
+}();
 
-using idx_t = uint16_t;
+// DP tables loaded from counts.bin
+static std::array<std::array<uint64_t, MAX_SIZE + 1>, MAX_SIZE + 1> C;
+static std::array<uint64_t, MAX_SIZE + 1> shapeCount, shapeWeight,
+    cumShapeWeight;
+static std::array<std::array<uint64_t, MAX_SIZE + 1>, MAX_SIZE + 1> blockWeight;
+static std::array<std::array<std::array<uint64_t, MAX_SIZE + 1>, MAX_SIZE + 1>,
+                  MAX_SIZE + 1>
+    rowWeightSum;
 
-// on-disk node format: exactly 8 bytes
-struct Node {
-    uint8_t type;      // 0=leaf,1=unary,2=binary
-    uint8_t numBinary; // number of binary ops in subtree
-    uint8_t childSize; // size of the single child (if unary) or left subtree
-    uint8_t rightSize; // size of right subtree (0 if unary)
-    union {
-        idx_t child; // for leaf/unary
-        struct {     // for binary
-            idx_t left, right;
-        } br;
-    } u;
-};
-static_assert(sizeof(Node) == 8, "Node on-disk format must be 8 bytes");
-
-class ExpressionGenerator {
-    int _fd{};
-    size_t _fileSize{};
-    const char *_data{};
-
-    std::array<const Node *, MAX_SIZE + 1> _nodesPool;
-    std::array<const uint32_t *, MAX_SIZE + 1> _roots;
-    std::array<const long long *, MAX_SIZE + 1> _prefix;
-    std::array<size_t, MAX_SIZE + 1> _shapeCount;
-    std::array<long long, MAX_SIZE + 1> _cumTotal;
-
-    mutable std::array<std::vector<std::vector<int>>, MAX_SIZE + 2> _rgsCache;
-    mutable std::array<int, MAX_SIZE> _tmpOp{};
-    mutable std::array<int, 64> _stamp{};
-    mutable std::array<char, 64> _chMap{};
-    mutable int _curStamp{1};
-    mutable std::array<char, 4096> _outBuf;
-    mutable size_t _outLen{0};
-
-    void generateRgs(int i, int m, int k, std::vector<int> &cur,
-                     std::vector<std::vector<int>> &out) const {
-        if (i == k) {
-            out.push_back(cur);
-            return;
-        }
-        for (int j = 0; j <= m + 1; ++j) {
-            cur.push_back(j);
-            generateRgs(i + 1, std::max(m, j), k, cur, out);
-            cur.pop_back();
+// ——— RGS DP tables & init ————————————————————————————————————————————
+static uint64_t DP_RGS[MAX_SIZE + 1][MAX_SIZE + 1];
+static void init_rgs_dp() {
+    for (int k = 0; k <= MAX_SIZE; ++k)
+        DP_RGS[0][k] = 1;
+    for (int len = 1; len <= MAX_SIZE; ++len) {
+        for (int k = 0; k <= MAX_SIZE; ++k) {
+            uint64_t sum = 0;
+            for (int v = 0; v <= k + 1; ++v) {
+                int nk = (v > k ? v : k);
+                sum += DP_RGS[len - 1][nk];
+            }
+            DP_RGS[len][k] = sum;
         }
     }
+}
+// ————————————————————————————————————————————————————————————————————
 
-  public:
-    ExpressionGenerator(const char *path = "precomputed_data.bin") {
-        _fd = open(path, O_RDONLY);
-        if (_fd < 0) {
-            perror("open");
-            exit(1);
+static void load_counts() {
+    int fd = open("counts.bin", O_RDONLY);
+    assert(fd >= 0);
+    struct stat st;
+    fstat(fd, &st);
+    auto data = (const uint8_t *)mmap(nullptr, st.st_size, PROT_READ,
+                                      MAP_PRIVATE, fd, 0);
+    assert(data != MAP_FAILED);
+    close(fd);
+
+    assert(*reinterpret_cast<const uint32_t *>(data) == 0xB10CB10C);
+    assert(int(*reinterpret_cast<const uint32_t *>(data + 4)) == MAX_SIZE);
+    const uint8_t *p = data + 8;
+
+    for (int s = 1; s <= MAX_SIZE; ++s) {
+        memcpy(C[s].data(), p, sizeof(uint64_t) * (MAX_SIZE + 1));
+        p += sizeof(uint64_t) * (MAX_SIZE + 1);
+    }
+    memcpy(shapeCount.data(), p, sizeof(uint64_t) * (MAX_SIZE + 1));
+    p += sizeof(uint64_t) * (MAX_SIZE + 1);
+    memcpy(shapeWeight.data(), p, sizeof(uint64_t) * (MAX_SIZE + 1));
+    p += sizeof(uint64_t) * (MAX_SIZE + 1);
+    memcpy(cumShapeWeight.data(), p, sizeof(uint64_t) * (MAX_SIZE + 1));
+    p += sizeof(uint64_t) * (MAX_SIZE + 1);
+
+    for (int s = 1; s <= MAX_SIZE; ++s)
+        for (int ls = 0; ls <= MAX_SIZE; ++ls) {
+            blockWeight[s][ls] = *reinterpret_cast<const uint64_t *>(p);
+            p += sizeof(uint64_t);
         }
-        struct stat st;
-        fstat(_fd, &st);
-        _fileSize = st.st_size;
-        _data = static_cast<const char *>(
-            mmap(nullptr, _fileSize, PROT_READ, MAP_PRIVATE, _fd, 0));
-        if (_data == MAP_FAILED) {
-            perror("mmap");
-            exit(1);
+    for (int s = 1; s <= MAX_SIZE; ++s)
+        for (int ls = 0; ls <= MAX_SIZE; ++ls) {
+            memcpy(rowWeightSum[s][ls].data(), p,
+                   sizeof(uint64_t) * (MAX_SIZE + 1));
+            p += sizeof(uint64_t) * (MAX_SIZE + 1);
         }
 
-        const char *ptr = _data;
-        for (int s = 1; s <= MAX_SIZE; ++s) {
-            // read node count
-            uint32_t nc = *reinterpret_cast<const uint32_t *>(ptr);
-            ptr += sizeof(uint32_t);
+    munmap((void *)data, st.st_size);
+}
 
-            // nodes
-            _nodesPool[s] = reinterpret_cast<const Node *>(ptr);
-            ptr += nc * sizeof(Node);
+// scratch buffer for building the prefix string
+static char OUT[1 << 16];
+static int OL;
 
-            uint32_t sc = *reinterpret_cast<const uint32_t *>(ptr);
-            ptr += sizeof(uint32_t);
-            _roots[s] = reinterpret_cast<const uint32_t *>(ptr);
-            ptr += sc * sizeof(uint32_t);
-
-            // prefix sums
-            _prefix[s] = reinterpret_cast<const long long *>(ptr);
-            ptr += sc * sizeof(long long);
-
-            _shapeCount[s] = sc;
+// count how many binary ops in the idx-th shape of size s
+static int count_binary(int s, uint64_t idx) {
+    if (s == 1)
+        return 0;
+    uint64_t binS = shapeCount[s] - shapeCount[s - 1];
+    if (idx < binS) {
+        uint64_t acc = 0;
+        int choice = 1;
+        for (int ls = 1; ls <= s - 2; ++ls) {
+            uint64_t bs = shapeCount[ls] * shapeCount[s - 1 - ls];
+            if (idx < acc + bs) {
+                idx -= acc;
+                choice = ls;
+                break;
+            }
+            acc += bs;
         }
-        // final cumulative totals
-        _cumTotal[0] = 0;
-        for (int s = 1; s <= MAX_SIZE; ++s) {
-            _cumTotal[s] = *reinterpret_cast<const long long *>(ptr);
-            ptr += sizeof(long long);
+        int ls = choice, rs = s - 1 - ls;
+        uint64_t i = idx / shapeCount[rs], j = idx % shapeCount[rs];
+        return 1 + count_binary(ls, i) + count_binary(rs, j);
+    } else {
+        return count_binary(s - 1, idx - (shapeCount[s] - shapeCount[s - 1]));
+    }
+}
+
+// build the actual prefix-notation string
+static void build_expr(int s, uint64_t idx, const std::vector<int> &ops,
+                       const std::vector<int> &rgs, int &leafIdx, int &opIdx) {
+    if (s == 1) {
+        OUT[OL++] = char('A' + rgs[leafIdx++]);
+        return;
+    }
+    uint64_t binS = shapeCount[s] - shapeCount[s - 1];
+    if (idx < binS) {
+        // binary root
+        uint64_t acc = 0;
+        int choice = 1;
+        for (int ls = 1; ls <= s - 2; ++ls) {
+            uint64_t bs = shapeCount[ls] * shapeCount[s - 1 - ls];
+            if (idx < acc + bs) {
+                idx -= acc;
+                choice = ls;
+                break;
+            }
+            acc += bs;
         }
+        int ls = choice, rs = s - 1 - ls;
+        uint64_t i = idx / shapeCount[rs], j = idx % shapeCount[rs];
+        int op = ops[opIdx++];
+        const char *lit = (op == 0 ? "AND" : op == 1 ? "OR" : "XOR");
+        int L = (op == 1 ? 2 : 3);
+        memcpy(OUT + OL, lit, L);
+        OL += L;
+        OUT[OL++] = '(';
+        build_expr(ls, i, ops, rgs, leafIdx, opIdx);
+        OUT[OL++] = ',';
+        build_expr(rs, j, ops, rgs, leafIdx, opIdx);
+        OUT[OL++] = ')';
+    } else {
+        // unary root
+        uint64_t uidx = idx - binS;
+        memcpy(OUT + OL, "NOT(", 4);
+        OL += 4;
+        build_expr(s - 1, uidx, ops, rgs, leafIdx, opIdx);
+        OUT[OL++] = ')';
+    }
+}
+
+// shape_unrank: binary splits (ls=1..s-2) first, then the unary split (ls=0)
+static uint64_t shape_unrank(int s, uint64_t woff, int &b_shape,
+                             uint64_t &variantOff) {
+    if (s == 1) {
+        b_shape = 0;
+        variantOff = woff; // must be zero
+        return 0;
     }
 
-    ~ExpressionGenerator() {
-        munmap(const_cast<char *>(_data), _fileSize);
-        close(_fd);
-    }
+    uint64_t binCount = shapeCount[s] - shapeCount[s - 1];
+    uint64_t acc = 0;
 
-    long long totalExpressions() const { return _cumTotal[MAX_SIZE]; }
-
-    std::string_view get_expression(long long n) const {
-        if (n < 1 || n > _cumTotal[MAX_SIZE])
-            return "ERROR";
-
-        // find size layer s
-        int s = 1;
-        while (_cumTotal[s] < n)
-            ++s;
-        long long base = _cumTotal[s - 1];
-        long long offset = n - (base + 1);
-
-        // pick which shape index
-        const long long *Pfx = _prefix[s];
-        int sc = int(_shapeCount[s]);
-        int idxSh = 0;
-        while (Pfx[idxSh] < offset + 1)
-            ++idxSh;
-        long long prev = idxSh ? Pfx[idxSh - 1] : 0;
-        long long resid = offset - prev;
-
-        const Node *Np = _nodesPool[s];
-        const uint32_t *Rts = _roots[s];
-        uint32_t rootIdx = Rts[idxSh];
-        int b = Np[rootIdx].numBinary;
-
-        // decode op choices
-        long long varCount = Bell[b + 1];
-        long long opv = resid / varCount;
-        long long varIdx = resid % varCount;
-        for (int i = b - 1; i >= 0; --i) {
-            _tmpOp[i] = int(opv % 3);
-            opv /= 3;
-        }
-
-        // generate RGS if needed
-        auto &rgsList = _rgsCache[b + 1];
-        if (rgsList.empty()) {
-            std::vector<int> cur{0};
-            rgsList.reserve(Bell[b + 1]);
-            generateRgs(1, 0, b + 1, cur, rgsList);
-        }
-        const auto &rgs = rgsList[varIdx];
-
-        // assign variable names
-        char next = 'A';
-        ++_curStamp;
-        for (int i = 0; i < b + 1; ++i) {
-            int blk = rgs[i];
-            if (_stamp[blk] != _curStamp) {
-                _stamp[blk] = _curStamp;
-                _chMap[blk] = next++;
+    // 1) binary-root blocks (ls=1..s-2)
+    for (int ls = 1; ls <= s - 2; ++ls) {
+        uint64_t bw = blockWeight[s][ls];
+        if (woff < acc + bw) {
+            uint64_t offB = woff - acc;
+            int rs = s - 1 - ls;
+            uint64_t rowAcc = 0;
+            for (int b1 = 0; b1 <= MAX_SIZE; ++b1) {
+                uint64_t cntL = C[ls][b1];
+                if (!cntL)
+                    continue;
+                uint64_t rowW = rowWeightSum[s][ls][b1];
+                uint64_t totW = cntL * rowW;
+                if (offB < rowAcc + totW) {
+                    uint64_t offG = offB - rowAcc;
+                    uint64_t i = offG / rowW;
+                    uint64_t offR = offG % rowW;
+                    uint64_t colAcc = 0;
+                    for (int b2 = 0; b2 <= MAX_SIZE; ++b2) {
+                        uint64_t cntR = C[rs][b2];
+                        if (!cntR)
+                            continue;
+                        uint64_t cellW = WeightFactor[b1 + b2 + 1];
+                        uint64_t totC = cntR * cellW;
+                        if (offR < colAcc + totC) {
+                            uint64_t off2 = offR - colAcc;
+                            uint64_t j = off2 / cellW;
+                            variantOff = off2 % cellW;
+                            b_shape = b1 + b2 + 1;
+                            // compute shapeIdx among *binary* shapes
+                            uint64_t base = 0;
+                            for (int x = 1; x < ls; ++x)
+                                base += shapeCount[x] * shapeCount[s - 1 - x];
+                            return base + i * shapeCount[rs] + j;
+                        }
+                        colAcc += totC;
+                    }
+                }
+                rowAcc += totW;
             }
         }
-
-        // build string
-        _outLen = 0;
-        int leafIdx = 0;
-        build(Np, rootIdx, b, rgs.data(), 0, leafIdx);
-        return {_outBuf.data(), _outLen};
+        acc += bw;
     }
 
-  private:
-    void build(const Node *Np, uint32_t ni, int b, const int *rgs, int opi,
-               int &leafIdx) const {
-        const Node &n = Np[ni];
-        if (n.type == 0) {
-            _outBuf[_outLen++] = _chMap[rgs[leafIdx++]];
-            return;
-        }
-        if (n.type == 1) {
-            memcpy(_outBuf.data() + _outLen, "NOT(", 4);
-            _outLen += 4;
-            build(_nodesPool[n.childSize], n.u.child, b, rgs, opi, leafIdx);
-            _outBuf[_outLen++] = ')';
-            return;
-        }
-        // binary
-        int op = _tmpOp[opi];
-        const char *lit = (op == 0 ? "AND" : op == 1 ? "OR" : "XOR");
-        size_t len = (op == 1 ? 2 : 3);
-        memcpy(_outBuf.data() + _outLen, lit, len);
-        _outLen += len;
-        _outBuf[_outLen++] = '(';
-        build(_nodesPool[n.childSize], n.u.br.left, b, rgs, opi + 1, leafIdx);
-        _outBuf[_outLen++] = ',';
-        build(_nodesPool[n.rightSize], n.u.br.right, b, rgs, opi + 1, leafIdx);
-        _outBuf[_outLen++] = ')';
+    // 2) unary-root block (ls=0) last:
+    uint64_t offU = woff - acc;
+    uint64_t childIdx = shape_unrank(s - 1, offU, b_shape, variantOff);
+    return binCount + childIdx;
+}
+
+// top-level unrank
+static std::string_view unrank(uint64_t N) {
+    assert(N >= 1 && N <= cumShapeWeight[MAX_SIZE]);
+    int s = 1;
+    while (cumShapeWeight[s] < N)
+        ++s;
+    uint64_t layerOff = N - (cumShapeWeight[s - 1] + 1);
+
+    int b_shape;
+    uint64_t variantOff;
+    uint64_t shapeIdx = shape_unrank(s, layerOff, b_shape, variantOff);
+
+    // split variantOff into opIndex vs varIndex
+    uint64_t nVar = Bell[b_shape + 1];
+    uint64_t opIndex = variantOff / nVar;
+    uint64_t varIndex = variantOff % nVar;
+
+    // base-3 decode ops
+    std::vector<int> ops(b_shape);
+    for (int i = b_shape - 1; i >= 0; --i) {
+        ops[i] = int(opIndex % 3);
+        opIndex /= 3;
     }
-};
+
+    // restricted-growth unrank for rgs[]
+    int M = b_shape + 1;
+    std::vector<int> rgs(M);
+    rgs[0] = 0;
+    {
+        int maxSeen = 0;
+        uint64_t rem = varIndex;
+        for (int pos = 1; pos < M; ++pos) {
+            int tail = M - pos - 1;
+            for (int v = 0; v <= maxSeen + 1; ++v) {
+                int nk = (v > maxSeen ? v : maxSeen);
+                uint64_t cnt = DP_RGS[tail][nk];
+                if (rem < cnt) {
+                    rgs[pos] = v;
+                    maxSeen = nk;
+                    break;
+                }
+                rem -= cnt;
+            }
+        }
+    }
+
+    // build and return the prefix-notation string
+    OL = 0;
+    int leafIdx = 0, opIdxLoc = 0;
+    build_expr(s, shapeIdx, ops, rgs, leafIdx, opIdxLoc);
+    return std::string_view(OUT, OL);
+}
 
 int main() {
-    ExpressionGenerator gen;
-    long long n = 100;
-    long long max = gen.totalExpressions();
-    for (long long i = 1; i <= n; ++i)
-        std::cout << "#" << i << ": " << gen.get_expression(i) << "\n";
-    std::cout << "#" << max << ": " << gen.get_expression(max) << "\n";
-    std::cout << "Total expressions: " << max << "\n";
+    init_rgs_dp();
+    load_counts();
+
+    uint64_t total = cumShapeWeight[MAX_SIZE];
+    uint64_t toPrint = std::min<uint64_t>(100, total);
+
+    for (uint64_t i = 1; i <= toPrint; ++i) {
+        auto e = unrank(i);
+        printf("#%llu: %.*s\n", (unsigned long long)i, int(e.size()), e.data());
+    }
+    auto last = unrank(total);
+    printf("#%llu: %.*s\n", (unsigned long long)total, int(last.size()),
+           last.data());
+    printf("Total expressions: %llu\n", (unsigned long long)total);
     return 0;
 }

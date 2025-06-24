@@ -15,3 +15,4 @@ set(CMAKE_EXE_LINKER_FLAGS_RELEASE
 
 add_executable(precompute precompute.cpp)
 add_executable(unrank      unrank.cpp)
+add_executable(compute compute.cpp)
