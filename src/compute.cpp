@@ -1,188 +1,25 @@
-#include "uint128_t.h"
-#include <algorithm>
-#include <array>
+#include "compute.h"
 #include <cassert>
 #include <chrono>
 #include <cmath>
-#include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <string>
-#include <vector>
-using u64 = uint64_t;
-using u128 = uint128_t;
-inline constexpr int MAX_SIZE = 43;
 
-// ─────────────────────────────────────────────
-// Precomputed Bell numbers: B[n] = # of set partitions of n
-// B[0] = 1
-// ─────────────────────────────────────────────
+char OUT[OUT_BUF_SIZE] = {};
 
-inline constexpr auto Bell = [] {
-    std::array<u64, 2 * MAX_SIZE + 2> B{}, prev{}, temp{};
-    B[0] = prev[0] = 1;
-    for (int n = 1; n <= MAX_SIZE + 1; ++n) {
-        temp[0] = prev[n - 1];
-        for (int k = 1; k <= n; ++k)
-            temp[k] = temp[k - 1] + prev[k - 1];
-        B[n] = temp[0];
-        std::ranges::copy(temp, prev.begin());
-    }
-    return B;
-}();
-
-// ─────────────────────────────────────────────
-// Precomputed powers of 3: 3^n
-// ─────────────────────────────────────────────
-
-inline constexpr auto Pow3 = [] {
-    std::array<u64, 2 * MAX_SIZE + 2> P{};
-    P[0] = 1;
-    for (int i = 1; i <= MAX_SIZE; ++i)
-        P[i] = P[i - 1] * 3;
-    return P;
-}();
-
-// ─────────────────────────────────────────────
-// Combined weight factors for each # of internal nodes b:
-// W[b] = B[b+1] * 3^b
-// ─────────────────────────────────────────────
-
-inline constexpr auto WeightFactor = [] {
-    std::array<u128, 2 * MAX_SIZE + 2> W{};
-    for (int b = 0; b <= MAX_SIZE; ++b)
-        W[b] = u128(Bell[b + 1]) * Pow3[b];
-    return W;
-}();
-
-// ─────────────────────────────────────────────
-// Shape Count DP
-// C[s][b] = # of binary trees with s leaves and b internal nodes
-// ─────────────────────────────────────────────
-
-// 4) C[s][b] at compile time
-inline constexpr auto C = [] {
-    std::array<std::array<u64, MAX_SIZE + 1>, MAX_SIZE + 1> tbl{};
-    tbl[1][0] = 1;
-    for (int s = 2; s <= MAX_SIZE; ++s) {
-        // binary splits
-        for (int ls = 1; ls <= s - 2; ++ls) {
-            int rs = s - 1 - ls;
-            for (int b1 = 0; b1 <= ls; ++b1) {
-                if (tbl[ls][b1] == 0)
-                    continue;
-                for (int b2 = 0; b2 <= rs; ++b2) {
-                    if (tbl[rs][b2] == 0)
-                        continue;
-                    tbl[s][b1 + b2 + 1] += tbl[ls][b1] * tbl[rs][b2];
-                }
-            }
-        }
-        // unary-not expansions
-        for (int b = 0; b <= s - 1; ++b)
-            tbl[s][b] += tbl[s - 1][b];
-    }
-    return tbl;
-}();
-
-// 5) shapeCount[s], shapeWeight[s], cumShapeWeight[s] at compile time
-inline constexpr auto shapeTables = [] {
-    std::array<u64, MAX_SIZE + 1> sc{};
-    std::array<u128, MAX_SIZE + 1> sw{}, cum{};
-    u128 running = 0;
-    for (int s = 1; s <= MAX_SIZE; ++s) {
-        u64 cnt = 0;
-        u128 wgt = 0;
-        for (int b = 0; b <= MAX_SIZE; ++b) {
-            cnt += C[s][b];
-            wgt += u128(C[s][b]) * WeightFactor[b];
-        }
-        sc[s] = cnt;
-        sw[s] = wgt;
-        running += wgt;
-        cum[s] = running;
-    }
-    return std::tuple{sc, sw, cum};
-}();
-inline constexpr auto &shapeCount = std::get<0>(shapeTables);
-inline constexpr auto &shapeWeight = std::get<1>(shapeTables);
-inline constexpr auto &cumShapeWeight = std::get<2>(shapeTables);
-
-// 6) blockWeight[s][ls] and rowWeightSum[s][ls][b1] at compile time
-inline constexpr auto blockAndRows = [] {
-    std::array<std::array<u128, MAX_SIZE + 1>, MAX_SIZE + 1> blk{};
-    std::array<std::array<std::array<u128, MAX_SIZE + 1>, MAX_SIZE + 1>,
-               MAX_SIZE + 1>
-        row{};
-    for (int s = 2; s <= MAX_SIZE; ++s) {
-        for (int ls = 1; ls <= s - 2; ++ls) {
-            int rs = s - 1 - ls;
-            u128 blockSum = 0;
-            for (int b1 = 0; b1 <= MAX_SIZE; ++b1) {
-                if (C[ls][b1] == 0)
-                    continue;
-                u128 rowSum = 0;
-                for (int b2 = 0; b2 <= MAX_SIZE; ++b2) {
-                    if (C[rs][b2] == 0)
-                        continue;
-                    rowSum += u128(C[rs][b2]) * WeightFactor[b1 + b2 + 1];
-                }
-                row[s][ls][b1] = rowSum;
-                blockSum += u128(C[ls][b1]) * rowSum;
-            }
-            blk[s][ls] = blockSum;
-        }
-    }
-    return std::tuple{blk, row};
-}();
-
-inline constexpr auto &blockWeight = std::get<0>(blockAndRows);
-inline constexpr auto &rowWeightSum = std::get<1>(blockAndRows);
-
-// 7) DP_RGS[len][k] at compile time
-inline constexpr auto DP_RGS = [] {
-    std::array<std::array<u64, MAX_SIZE + 1>, MAX_SIZE + 1> dp{};
-    for (int k = 0; k <= MAX_SIZE; ++k)
-        dp[0][k] = 1;
-    for (int len = 1; len <= MAX_SIZE; ++len) {
-        for (int k = 0; k <= MAX_SIZE; ++k) {
-            u64 sum = 0;
-            // v up to k+1, but cap at MAX_SIZE
-            for (int v = 0; v <= k + 1 && v <= MAX_SIZE; ++v) {
-                int idx = (v > k ? v : k);
-                sum += dp[len - 1][idx];
-            }
-            dp[len][k] = sum;
-        }
-    }
-    return dp;
-}();
-
-// ─────────────────────────────────────────────
-// Expression Builder: builds a string from shape + operators + labels
-// ─────────────────────────────────────────────
-
-inline constexpr size_t OUT_BUF_SIZE = 1 << 16;
-inline char OUT[OUT_BUF_SIZE];
-
-/**
- * @brief Recursively emits the expression syntax
- *   s: current tree size
- *   idx: shape index
- *   ops: operator sequence
- *   rgs: variable labels
- *   OL: output length so far
- */
-inline void build_expr(int s, u128 idx, const std::vector<int> &ops,
-                       const std::vector<int> &rgs, int &leafIdx, int &opIdx,
-                       int &OL) {
+// Recursively build the Boolean expression string from shape index and
+// operators
+void build_expr(int s, u128 idx, const std::vector<int> &ops,
+                const std::vector<int> &rgs, int &leafIdx, int &opIdx,
+                int &OL) {
     if (s == 1) {
         OUT[OL++] = char('A' + rgs[leafIdx++]);
         return;
     }
+
     u128 binCount = shapeCount[s] - shapeCount[s - 1];
     if (idx < binCount) {
-        // Binary node
+        // Binary operator: find left/right subtree split
         u128 acc = 0;
         int ls = 1;
         for (int l = 1; l <= s - 2; ++l) {
@@ -207,7 +44,7 @@ inline void build_expr(int s, u128 idx, const std::vector<int> &ops,
         build_expr(rs, j, ops, rgs, leafIdx, opIdx, OL);
         OUT[OL++] = ')';
     } else {
-        // Unary NOT
+        // Unary NOT node
         std::memcpy(OUT + OL, "NOT(", 4);
         OL += 4;
         build_expr(s - 1, idx - binCount, ops, rgs, leafIdx, opIdx, OL);
@@ -215,13 +52,9 @@ inline void build_expr(int s, u128 idx, const std::vector<int> &ops,
     }
 }
 
-// ─────────────────────────────────────────────
-// Shape Unranking: decode shape index + weight offset
-// into concrete subtree splits and internal node counts.
-// Complex but deterministic.
-// ─────────────────────────────────────────────
-
-inline u128 shape_unrank(int s, u128 woff, int &b_shape, u128 &variantOff) {
+// Decode weight offset back to shape index + internal node count.
+// This handles the layered DP blocks deterministically.
+u128 shape_unrank(int s, u128 woff, int &b_shape, u128 &variantOff) {
     if (s == 1) {
         b_shape = 0;
         variantOff = woff;
@@ -244,6 +77,8 @@ inline u128 shape_unrank(int s, u128 woff, int &b_shape, u128 &variantOff) {
                     u128 offG = offB - rowAcc;
                     u128 i = offG / rowW;
                     u128 offR = offG % rowW;
+
+                    // Find right-side b2 matching this residual offset
                     u128 colAcc = 0;
                     for (int b2 = 0; b2 <= MAX_SIZE; ++b2) {
                         if (!C[rs][b2])
@@ -272,13 +107,11 @@ inline u128 shape_unrank(int s, u128 woff, int &b_shape, u128 &variantOff) {
     return binTotal + shape_unrank(s - 1, woff - acc, b_shape, variantOff);
 }
 
-// ─────────────────────────────────────────────
-// Top-level Unranking: maps 1 ≤ N ≤ total to unique expression string.
-// Uses shape, op pattern, and variable RGS.
-// ─────────────────────────────────────────────
-
-inline std::string unrank(u128 N) {
+// map rank N to its unique Boolean expression
+std::string unrank(u128 N) {
     assert(N >= 1 && N <= cumShapeWeight[MAX_SIZE]);
+
+    // Find the leaf size layer s such that N lands in its weight interval
     int s = 1;
     while (cumShapeWeight[s] < N)
         ++s;
@@ -291,12 +124,14 @@ inline std::string unrank(u128 N) {
     u128 opIndex = variantOff / nVar;
     u128 varIndex = variantOff % nVar;
 
+    // Decode operators (base-3)
     std::vector<int> ops(b_shape);
     for (int i = b_shape - 1; i >= 0; --i) {
         ops[i] = int(opIndex % 3);
         opIndex /= 3;
     }
 
+    // Decode variable labels (restricted growth string)
     std::vector<int> rgs(b_shape + 1);
     rgs[0] = 0;
     int maxSeen = 0;
@@ -314,13 +149,14 @@ inline std::string unrank(u128 N) {
         }
     }
 
+    // Emit expression string into OUT buffer
     int OL = 0, leafIdx = 0, opIdx = 0;
     build_expr(s, shapeIdx, ops, rgs, leafIdx, opIdx, OL);
     return {OUT, OUT + OL};
 }
+
 int main() {
     using Clock = std::chrono::high_resolution_clock;
-
     auto start = Clock::now();
 
     const u128 total = cumShapeWeight[MAX_SIZE];
@@ -330,9 +166,8 @@ int main() {
     printf("\n#%s: %s\n", total.to_string().c_str(), unrank(total).c_str());
 
     __uint128_t tot128 = ((__uint128_t)total.high << 64) | total.low;
-    long double pct =
-        (long double)tot128 / powl((long double)2.0, 128) * 100.0L;
-    printf("Used %.18Lf%% of 128-bit range\n", pct);
+    long double pct = (long double)tot128 / powl(2.0L, 128) * 100.0L;
+    printf("\nUsed %.18Lf%% of 128-bit range\n", pct);
 
     auto end = Clock::now();
     auto elapsed_us =
@@ -340,6 +175,7 @@ int main() {
             .count();
     auto elapsed_ms = elapsed_us / 1000.0;
 
-    printf("Elapsed time: %.3f ms (%.0f µs)\n", elapsed_ms, (double)elapsed_us);
+    printf("\nElapsed time: %.3f ms (%.0f µs)\n", elapsed_ms,
+           (double)elapsed_us);
     return 0;
 }
