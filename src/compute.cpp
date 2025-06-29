@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 char OUT[OUT_BUF_SIZE] = {};
 
@@ -160,11 +161,95 @@ int main() {
     auto start = Clock::now();
 
     const u128 total = cumShapeWeight[MAX_SIZE];
+    const u128 N = 100;
 
-    for (u128 i = 1; i <= 100; ++i)
-        printf("#%s: %s\n", i.to_string().c_str(), unrank(i).c_str());
-    printf("\n#%s: %s\n", total.to_string().c_str(), unrank(total).c_str());
+    std::unordered_map<std::string, std::vector<u128>> exprMap;
+    std::vector<std::string> exprs;
 
+    for (u128 i = 1; i <= N; ++i) {
+        std::string expr = unrank(i);
+        exprMap[expr].push_back(i);
+        exprs.push_back(expr);
+        printf("#%s: %s\n", i.to_string().c_str(), expr.c_str());
+    }
+
+    bool has_duplicates = false;
+    for (const auto &[expr, ranks] : exprMap) {
+        if (ranks.size() <= 1)
+            continue;
+
+        has_duplicates = true;
+        printf("\nDuplicate expression: \"%s\" (%zu times)\n", expr.c_str(),
+               ranks.size());
+
+        for (u128 idx : ranks) {
+            int s = 1;
+            while (cumShapeWeight[s] < idx)
+                ++s;
+            u128 layerOff = idx - (cumShapeWeight[s - 1] + 1);
+
+            int b_shape{};
+            u128 variantOff{};
+            u128 shapeIdx = shape_unrank(s, layerOff, b_shape, variantOff);
+
+            u128 nVar = Bell[b_shape + 1];
+            u128 opIndex = variantOff / nVar;
+            u128 varIndex = variantOff % nVar;
+
+            std::vector<int> ops(b_shape);
+            for (int i = b_shape - 1; i >= 0; --i) {
+                ops[i] = int(opIndex % 3);
+                opIndex /= 3;
+            }
+
+            std::vector<int> rgs(b_shape + 1);
+            rgs[0] = 0;
+            int maxSeen = 0;
+            u128 rem = varIndex;
+            for (int pos = 1; pos <= b_shape; ++pos) {
+                int tail = b_shape - pos;
+                for (int v = 0; v <= maxSeen + 1; ++v) {
+                    int nk = std::max(v, maxSeen);
+                    if (rem < DP_RGS[tail][nk]) {
+                        rgs[pos] = v;
+                        maxSeen = nk;
+                        break;
+                    }
+                    rem -= DP_RGS[tail][nk];
+                }
+            }
+
+            printf("  #%s: s=%d | shapeIdx=%s | b=%d | variantOff=%s\n",
+                   idx.to_string().c_str(), s, shapeIdx.to_string().c_str(),
+                   b_shape, variantOff.to_string().c_str());
+
+            printf("    ops = ");
+            for (int o : ops)
+                printf("%d", o);
+            printf("\n");
+
+            printf("    rgs = ");
+            for (int r : rgs)
+                printf("%d", r);
+            printf("\n");
+        }
+    }
+
+    if (!has_duplicates)
+        printf("\n✅ No visual duplicates found in first %s expressions.\n",
+               N.to_string().c_str());
+
+    // Summary
+    u128 firstDeep = cumShapeWeight[MAX_SIZE - 1] + 1;
+    std::string exprFirstDeep = unrank(firstDeep);
+    std::string exprLastDeep = unrank(total);
+
+    printf("\nFirst expression at deepest layer (%d leaves) (#%s): %s\n",
+           MAX_SIZE, firstDeep.to_string().c_str(), exprFirstDeep.c_str());
+    printf("Last  expression at deepest layer (#%s): %s\n",
+           total.to_string().c_str(), exprLastDeep.c_str());
+
+    // 128-bit usage
     __uint128_t tot128 = ((__uint128_t)total.high << 64) | total.low;
     long double pct = (long double)tot128 / powl(2.0L, 128) * 100.0L;
     printf("\nUsed %.18Lf%% of 128-bit range\n", pct);
@@ -173,9 +258,8 @@ int main() {
     auto elapsed_us =
         std::chrono::duration_cast<std::chrono::microseconds>(end - start)
             .count();
-    auto elapsed_ms = elapsed_us / 1000.0;
-
-    printf("\nElapsed time: %.3f ms (%.0f µs)\n", elapsed_ms,
+    printf("\nElapsed time: %.3f ms (%.0f µs)\n", elapsed_us / 1000.0,
            (double)elapsed_us);
+
     return 0;
 }
