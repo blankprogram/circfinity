@@ -4,197 +4,293 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 char OUT[OUT_BUF_SIZE] = {};
-
-// Recursively build the Boolean expression string from shape index and
-// operators
-void build_expr(int s, u128 idx, const std::vector<int> &ops,
-                const std::vector<int> &rgs, int &leafIdx, int &opIdx,
-                int &OL) {
+std::unique_ptr<PlanNode> build_plan(int s, u128 shapeIdx) {
+    auto node = std::make_unique<PlanNode>();
     if (s == 1) {
-        OUT[OL++] = char('A' + rgs[leafIdx++]);
-        return;
-    }
-
-    u128 binCount = shapeCount[s] - shapeCount[s - 1];
-    if (idx < binCount) {
-        // Binary operator: find left/right subtree split
-        u128 acc = 0;
-        int ls = 1;
-        for (int l = 1; l <= s - 2; ++l) {
-            u128 bs = u128(shapeCount[l]) * shapeCount[s - 1 - l];
-            if (idx < acc + bs) {
-                ls = l;
-                idx -= acc;
-                break;
-            }
-            acc += bs;
-        }
-        int rs = s - 1 - ls;
-        u128 i = idx / shapeCount[rs];
-        u128 j = idx % shapeCount[rs];
-        int op = ops[opIdx++];
-        std::string_view opStr = op == 0 ? "AND" : op == 1 ? "OR" : "XOR";
-        std::memcpy(OUT + OL, opStr.data(), opStr.size());
-        OL += opStr.size();
-        OUT[OL++] = '(';
-        build_expr(ls, i, ops, rgs, leafIdx, opIdx, OL);
-        OUT[OL++] = ',';
-        build_expr(rs, j, ops, rgs, leafIdx, opIdx, OL);
-        OUT[OL++] = ')';
-    } else {
-        // Unary NOT node
-        std::memcpy(OUT + OL, "NOT(", 4);
-        OL += 4;
-        build_expr(s - 1, idx - binCount, ops, rgs, leafIdx, opIdx, OL);
-        OUT[OL++] = ')';
-    }
-}
-
-// Decode weight offset back to shape index + internal node count.
-// This handles the layered DP blocks deterministically.
-u128 shape_unrank(int s, u128 woff, int &b_shape, u128 &variantOff) {
-    if (s == 1) {
-        b_shape = 0;
-        variantOff = woff;
-        return 0;
+        node->type = NodeType::Leaf;
+        return node;
     }
     u128 binTotal = u128(shapeCount[s]) - shapeCount[s - 1];
-    u128 acc = 0;
-    for (int ls = 1; ls <= s - 2; ++ls) {
-        u128 bw = blockWeight[s][ls];
-        if (woff < acc + bw) {
-            u128 offB = woff - acc;
-            int rs = s - 1 - ls;
-            u128 rowAcc = 0;
-            for (int b1 = 0; b1 <= MAX_SIZE; ++b1) {
-                if (!C[ls][b1])
-                    continue;
-                u128 rowW = rowWeightSum[s][ls][b1];
-                u128 totW = u128(C[ls][b1]) * rowW;
-                if (offB < rowAcc + totW) {
-                    u128 offG = offB - rowAcc;
-                    u128 i = offG / rowW;
-                    u128 offR = offG % rowW;
-
-                    // Find right-side b2 matching this residual offset
-                    u128 colAcc = 0;
-                    for (int b2 = 0; b2 <= MAX_SIZE; ++b2) {
-                        if (!C[rs][b2])
-                            continue;
-                        u128 cellW = WeightFactor[b1 + b2 + 1];
-                        u128 totC = u128(C[rs][b2]) * cellW;
-                        if (offR < colAcc + totC) {
-                            u128 off2 = offR - colAcc;
-                            u128 j = off2 / cellW;
-                            variantOff = off2 % cellW;
-                            b_shape = b1 + b2 + 1;
-                            u128 base = 0;
-                            for (int x = 1; x < ls; ++x)
-                                base +=
-                                    u128(shapeCount[x]) * shapeCount[s - 1 - x];
-                            return base + i * shapeCount[rs] + j;
-                        }
-                        colAcc += totC;
-                    }
-                }
-                rowAcc += totW;
-            }
+    if (shapeIdx < binTotal) {
+        // binary root
+        node->type = NodeType::Binary;
+        int ls = 1;
+        u128 acc = 0;
+        for (; ls <= s - 2; ++ls) {
+            u128 blockCnt = u128(shapeCount[ls]) * shapeCount[s - 1 - ls];
+            if (shapeIdx < acc + blockCnt)
+                break;
+            acc += blockCnt;
         }
-        acc += bw;
+        int rs = s - 1 - ls;
+        u128 local = shapeIdx - acc;
+        u128 i = local / shapeCount[rs];
+        u128 j = local % shapeCount[rs];
+        node->ls = ls;
+        node->rs = rs;
+        node->children.push_back(build_plan(ls, i));
+        node->children.push_back(build_plan(rs, j));
+    } else {
+        // unary NOT
+        node->type = NodeType::Unary;
+        u128 subIdx = shapeIdx - binTotal;
+        node->children.push_back(build_plan(s - 1, subIdx));
     }
-    return binTotal + shape_unrank(s - 1, woff - acc, b_shape, variantOff);
+    return node;
 }
 
-// map rank N to its unique Boolean expression
+void build_from_plan(const PlanNode *node, const std::vector<int> &ops,
+                     const std::vector<int> &rgs, int &leafIdx, int &opIdx,
+                     int &OL) {
+    switch (node->type) {
+    case NodeType::Leaf:
+        OUT[OL++] = char('A' + rgs[leafIdx++]);
+        break;
+    case NodeType::Unary:
+        std::memcpy(OUT + OL, "NOT(", 4);
+        OL += 4;
+        build_from_plan(node->children[0].get(), ops, rgs, leafIdx, opIdx, OL);
+        OUT[OL++] = ')';
+        break;
+    case NodeType::Binary: {
+        int op = ops[opIdx++];
+        std::string_view opStr = (op == 0 ? "AND" : op == 1 ? "OR" : "XOR");
+        std::memcpy(OUT + OL, opStr.data(), opStr.size());
+        OL += (int)opStr.size();
+        OUT[OL++] = '(';
+        build_from_plan(node->children[0].get(), ops, rgs, leafIdx, opIdx, OL);
+        OUT[OL++] = ',';
+        build_from_plan(node->children[1].get(), ops, rgs, leafIdx, opIdx, OL);
+        OUT[OL++] = ')';
+        break;
+    }
+    }
+}
+
+static int count_leaves(const PlanNode *n) {
+    if (n->type == NodeType::Leaf) {
+        return 1;
+    } else if (n->type == NodeType::Unary) {
+        return count_leaves(n->children[0].get());
+    } else { // Binary
+        return count_leaves(n->children[0].get()) +
+               count_leaves(n->children[1].get());
+    }
+}
+
+inline u128 variant_weight(int leafCount, int b_shape) {
+    return u128(Pow3[b_shape]) * Bell[leafCount];
+}
+
+static std::vector<std::vector<std::string>> shapeSig;
+void build_signature(int s, u128 shapeIdx, std::string &out) {
+    if (s == 1) {
+        out += 'L';
+        return;
+    }
+    u128 binTotal = u128(shapeCount[s]) - shapeCount[s - 1];
+    if (shapeIdx < binTotal) {
+        out += 'B';
+        int ls = 1;
+        u128 acc = 0;
+        for (; ls <= s - 2; ++ls) {
+            u128 blockCnt = u128(shapeCount[ls]) * shapeCount[s - 1 - ls];
+            if (shapeIdx < acc + blockCnt)
+                break;
+            acc += blockCnt;
+        }
+        int rs = s - 1 - ls;
+        u128 local = shapeIdx - acc;
+        u128 i = local / shapeCount[rs];
+        u128 j = local % shapeCount[rs];
+        build_signature(ls, i, out);
+        build_signature(rs, j, out);
+    } else {
+        out += 'U';
+        u128 subIdx = shapeIdx - binTotal;
+        build_signature(s - 1, subIdx, out);
+    }
+}
+
+int count_B(const std::string &sig) {
+    return std::count(sig.begin(), sig.end(), 'B');
+}
+int count_L(const std::string &sig) {
+    return std::count(sig.begin(), sig.end(), 'L');
+}
+
+static std::vector<std::vector<int>> B_sig;
+static std::vector<std::vector<int>> L_sig;
+static std::vector<std::vector<u128>> W_sig;
+static std::vector<std::vector<u128>> prefixW;
+
+struct ShapeMetadata {
+    int b;
+    int l;
+    u128 w;
+};
+
+static std::vector<std::vector<ShapeMetadata>> shapeMeta;
+
+inline const auto W_lookup = [] {
+    std::array<std::array<u128, MAX_SIZE + 1>, MAX_SIZE + 1> W{};
+    for (int b = 0; b <= MAX_SIZE; ++b)
+        for (int l = 1; l <= MAX_SIZE; ++l)
+            W[b][l] = u128(Pow3[b]) * Bell[l];
+    return W;
+}();
+
+void precompute_all_layers() {
+    shapeMeta.resize(MAX_SIZE + 1);
+    prefixW.resize(MAX_SIZE + 1);
+
+    shapeMeta[1].push_back({0, 1, W_lookup[0][1]});
+    prefixW[1] = {0, W_lookup[0][1]};
+
+    for (int s = 2; s <= MAX_SIZE; ++s) {
+        std::vector<ShapeMetadata> meta;
+
+        for (int ls = 1; ls <= s - 2; ++ls) {
+            int rs = s - 1 - ls;
+            for (size_t i = 0; i < shapeMeta[ls].size(); ++i) {
+                for (size_t j = 0; j < shapeMeta[rs].size(); ++j) {
+                    int b = 1 + shapeMeta[ls][i].b + shapeMeta[rs][j].b;
+                    int l = shapeMeta[ls][i].l + shapeMeta[rs][j].l;
+                    meta.push_back({b, l, W_lookup[b][l]});
+                }
+            }
+        }
+
+        for (const auto &sm : shapeMeta[s - 1]) {
+            meta.push_back({sm.b, sm.l, W_lookup[sm.b][sm.l]});
+        }
+
+        shapeMeta[s] = std::move(meta);
+        prefixW[s].resize(shapeMeta[s].size() + 1);
+        for (size_t i = 0; i < shapeMeta[s].size(); ++i)
+            prefixW[s][i + 1] = prefixW[s][i] + shapeMeta[s][i].w;
+    }
+}
+
+u128 shape_unrank(int s, u128 woff, int &b_shape, u128 &variantOff) {
+    const auto &P = prefixW[s];
+    auto it = std::upper_bound(P.begin(), P.end(), woff);
+    int idx = int((it - P.begin()) - 1);
+
+    variantOff = woff - P[idx];
+    b_shape = shapeMeta[s][idx].b;
+    return idx;
+}
+
 std::string unrank(u128 N) {
     assert(N >= 1 && N <= cumShapeWeight[MAX_SIZE]);
 
-    // Find the leaf size layer s such that N lands in its weight interval
     int s = 1;
     while (cumShapeWeight[s] < N)
         ++s;
-
     u128 layerOff = N - (cumShapeWeight[s - 1] + 1);
-    int b_shape{};
-    u128 variantOff{};
-    u128 shapeIdx = shape_unrank(s, layerOff, b_shape, variantOff);
-    u128 nVar = Bell[b_shape + 1];
-    u128 opIndex = variantOff / nVar;
-    u128 varIndex = variantOff % nVar;
 
-    // Decode operators (base-3)
+    int b_shape = 0;
+    u128 variantOff = 0;
+    u128 shapeIdx = shape_unrank(s, layerOff, b_shape, variantOff);
+
+    auto plan = build_plan(s, shapeIdx);
+    int leafCount = count_leaves(plan.get());
+
+    u128 labelCount = Bell[leafCount];
+    u128 opIndex = variantOff / labelCount;
+    u128 labIndex = variantOff % labelCount;
+
     std::vector<int> ops(b_shape);
     for (int i = b_shape - 1; i >= 0; --i) {
         ops[i] = int(opIndex % 3);
         opIndex /= 3;
     }
 
-    // Decode variable labels (restricted growth string)
-    std::vector<int> rgs(b_shape + 1);
+    std::vector<int> rgs(leafCount);
     rgs[0] = 0;
     int maxSeen = 0;
-    u128 rem = varIndex;
-    for (int pos = 1; pos <= b_shape; ++pos) {
-        int tail = b_shape - pos;
+    u128 rem = labIndex;
+    for (int pos = 1; pos < leafCount; ++pos) {
+        int tail = leafCount - pos - 1;
         for (int v = 0; v <= maxSeen + 1; ++v) {
             int nk = std::max(v, maxSeen);
-            if (rem < DP_RGS[tail][nk]) {
+            u128 cnt = DP_RGS[tail][nk];
+            if (rem < cnt) {
                 rgs[pos] = v;
                 maxSeen = nk;
                 break;
             }
-            rem -= DP_RGS[tail][nk];
+            rem -= cnt;
         }
     }
 
-    // Emit expression string into OUT buffer
-    int OL = 0, leafIdx = 0, opIdx = 0;
-    build_expr(s, shapeIdx, ops, rgs, leafIdx, opIdx, OL);
-    return {OUT, OUT + OL};
+    int OL = 0, leafIdx = 0, opIdxInner = 0;
+    build_from_plan(plan.get(), ops, rgs, leafIdx, opIdxInner, OL);
+    return std::string(OUT, OUT + OL);
 }
-
 int main() {
+
     using Clock = std::chrono::high_resolution_clock;
-    auto start = Clock::now();
+    auto pre_start = Clock::now();
+    precompute_all_layers();
+    auto pre_end = Clock::now();
+    auto run_start = Clock::now();
 
-    const u128 total = cumShapeWeight[MAX_SIZE];
-    const u128 N = 100;
-
-    std::unordered_map<std::string, std::vector<u128>> exprMap;
     std::vector<std::string> exprs;
+    const u128 total = cumShapeWeight[MAX_SIZE];
 
-    for (u128 i = 1; i <= N; ++i) {
+    for (u128 i = 1; i <= 100; ++i) {
         std::string expr = unrank(i);
-        exprMap[expr].push_back(i);
         exprs.push_back(expr);
         printf("#%s: %s\n", i.to_string().c_str(), expr.c_str());
     }
+    u128 firstDeep = cumShapeWeight[MAX_SIZE - 1] + 1;
+    u128 lastDeep = cumShapeWeight[MAX_SIZE];
+    std::string exprFirstDeep = unrank(firstDeep);
+    std::string exprLastDeep = unrank(lastDeep);
+    printf("First expression at deepest layer (%d leaves) (#%s): %s\n",
+           MAX_SIZE, firstDeep.to_string().c_str(), exprFirstDeep.c_str());
+
+    printf("Last  expression at deepest layer (#%s): %s\n",
+           lastDeep.to_string().c_str(), exprLastDeep.c_str());
+    // 2) Gather duplicates.
+    std::unordered_map<std::string, std::vector<u128>> occurrences;
+    for (u128 i = 0; i < exprs.size(); ++i)
+        occurrences[exprs[static_cast<size_t>(i.low)]].push_back(i + 1);
 
     bool has_duplicates = false;
-    for (const auto &[expr, ranks] : exprMap) {
-        if (ranks.size() <= 1)
+    for (auto &[expr, idx_list] : occurrences) {
+        if (idx_list.size() <= 1)
             continue;
+        if (!has_duplicates) {
+            printf("\nDuplicates found:\n");
+            has_duplicates = true;
+        }
+        printf("  \"%s\" appears %zu times:\n", expr.c_str(), idx_list.size());
 
-        has_duplicates = true;
-        printf("\nDuplicate expression: \"%s\" (%zu times)\n", expr.c_str(),
-               ranks.size());
-
-        for (u128 idx : ranks) {
+        for (u128 idx : idx_list) {
             int s = 1;
             while (cumShapeWeight[s] < idx)
                 ++s;
             u128 layerOff = idx - (cumShapeWeight[s - 1] + 1);
 
-            int b_shape{};
-            u128 variantOff{};
+            int b_shape = -1;
+            u128 variantOff = 0;
             u128 shapeIdx = shape_unrank(s, layerOff, b_shape, variantOff);
 
-            u128 nVar = Bell[b_shape + 1];
-            u128 opIndex = variantOff / nVar;
-            u128 varIndex = variantOff % nVar;
+            auto plan = build_plan(s, shapeIdx);
+            int leafCount = count_leaves(plan.get());
+
+            u128 labelCount = Bell[leafCount];
+            u128 opIndex = variantOff / labelCount;
+            u128 labIndex = variantOff % labelCount;
 
             std::vector<int> ops(b_shape);
             for (int i = b_shape - 1; i >= 0; --i) {
@@ -202,12 +298,12 @@ int main() {
                 opIndex /= 3;
             }
 
-            std::vector<int> rgs(b_shape + 1);
+            std::vector<int> rgs(leafCount);
             rgs[0] = 0;
             int maxSeen = 0;
-            u128 rem = varIndex;
-            for (int pos = 1; pos <= b_shape; ++pos) {
-                int tail = b_shape - pos;
+            u128 rem = labIndex;
+            for (int pos = 1; pos < leafCount; ++pos) {
+                int tail = leafCount - pos - 1;
                 for (int v = 0; v <= maxSeen + 1; ++v) {
                     int nk = std::max(v, maxSeen);
                     if (rem < DP_RGS[tail][nk]) {
@@ -219,47 +315,44 @@ int main() {
                 }
             }
 
-            printf("  #%s: s=%d | shapeIdx=%s | b=%d | variantOff=%s\n",
+            printf("    • #%s | s=%d | shapeIdx=%s | b=%d\n",
                    idx.to_string().c_str(), s, shapeIdx.to_string().c_str(),
-                   b_shape, variantOff.to_string().c_str());
+                   b_shape);
 
-            printf("    ops = ");
+            printf("      ops = ");
             for (int o : ops)
                 printf("%d", o);
             printf("\n");
 
-            printf("    rgs = ");
-            for (int r : rgs)
-                printf("%d", r);
+            printf("      rgs = ");
+            for (int rv : rgs)
+                printf("%d", rv);
             printf("\n");
         }
     }
 
-    if (!has_duplicates)
-        printf("\n✅ No visual duplicates found in first %s expressions.\n",
-               N.to_string().c_str());
+    if (!has_duplicates) {
+        printf("\nDuplicates?: no\n");
+    }
 
-    // Summary
-    u128 firstDeep = cumShapeWeight[MAX_SIZE - 1] + 1;
-    std::string exprFirstDeep = unrank(firstDeep);
-    std::string exprLastDeep = unrank(total);
-
-    printf("\nFirst expression at deepest layer (%d leaves) (#%s): %s\n",
-           MAX_SIZE, firstDeep.to_string().c_str(), exprFirstDeep.c_str());
-    printf("Last  expression at deepest layer (#%s): %s\n",
-           total.to_string().c_str(), exprLastDeep.c_str());
-
-    // 128-bit usage
     __uint128_t tot128 = ((__uint128_t)total.high << 64) | total.low;
     long double pct = (long double)tot128 / powl(2.0L, 128) * 100.0L;
     printf("\nUsed %.18Lf%% of 128-bit range\n", pct);
 
-    auto end = Clock::now();
-    auto elapsed_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-            .count();
-    printf("\nElapsed time: %.3f ms (%.0f µs)\n", elapsed_us / 1000.0,
-           (double)elapsed_us);
+    auto run_end = Clock::now();
+    auto pre_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      pre_end - pre_start)
+                      .count();
+    auto run_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      run_end - run_start)
+                      .count();
+    auto total_us = pre_us + run_us;
+
+    printf("\n--- Timing Breakdown ---\n");
+    printf("Precompute: %.3f ms (%.0f µs)\n", pre_us / 1000.0, (double)pre_us);
+    printf("Unranking:  %.3f ms (%.0f µs)\n", run_us / 1000.0, (double)run_us);
+    printf("Total:      %.3f ms (%.0f µs)\n", total_us / 1000.0,
+           (double)total_us);
 
     return 0;
 }

@@ -7,7 +7,7 @@
 using u64 = uint64_t;
 using u128 = uint128_t;
 
-inline constexpr int MAX_SIZE = 40;
+inline constexpr int MAX_SIZE = 20;
 
 // Bell numbers: B[n] = number of set partitions of n elements.
 // Used to count valid variable labelings (RGS).
