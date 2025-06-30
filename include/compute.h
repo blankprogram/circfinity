@@ -1,15 +1,26 @@
-#pragma once
+#ifndef COMPUTE_H
+#define COMPUTE_H
 
-#include "compute_data.h"
 #include <string>
+#include <string_view>
 #include <vector>
 
-inline constexpr size_t OUT_BUF_SIZE = 1 << 16;
-extern char OUT[OUT_BUF_SIZE];
+using u128 = unsigned __int128;
 
-void build_expr(int s, u128 idx, const std::vector<int> &ops,
-                const std::vector<int> &rgs, int &leafIdx, int &opIdx, int &OL);
+inline constexpr int ALPHA = 26;
 
-u128 shape_unrank(int s, u128 woff, int &b_shape, u128 &variantOff);
+std::string to_string(u128 x);
 
-std::string unrank(u128 N);
+int bit_length(u128 x) noexcept;
+
+std::vector<int> unrank_rgs(int len, u128 k);
+
+std::string unrank_shape(int s, int u, u128 k);
+
+std::string emit_expr(const std::string &sig, u128 opIdx, u128 lblIdx);
+
+std::string nth_expression(u128 n);
+
+bool neighbour_ok(std::string_view expr);
+
+#endif // COMPUTE_H
