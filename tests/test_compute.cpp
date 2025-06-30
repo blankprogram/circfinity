@@ -5,8 +5,8 @@
 #include <vector>
 
 // helpers ---------------------------------------------------------------
-static u128 ipow(u128 b, int e) {
-    u128 r = 1;
+static bigint ipow(bigint b, int e) {
+    bigint r = 1;
     while (e) {
         if (e & 1)
             r *= b;
@@ -15,22 +15,35 @@ static u128 ipow(u128 b, int e) {
     }
     return r;
 }
-constexpr u128 binom(int n, int k) {
+constexpr bigint binom(int n, int k) {
     if (k < 0 || k > n)
         return 0;
     if (k > n - k)
         k = n - k;
-    u128 r = 1;
+    bigint r = 1;
     for (int i = 1; i <= k; ++i)
-        r = r * u128(n - i + 1) / u128(i);
+        r = r * bigint(n - i + 1) / bigint(i);
     return r;
 }
-static std::string strip(std::string_view s) {
-    std::string r;
-    for (char c : s)
-        if (c != '(' && c != ')' && c != ',')
-            r.push_back(c);
-    return r;
+
+static std::vector<int> make_labels(std::size_t n) {
+    std::vector<int> v(n);
+    std::iota(v.begin(), v.end(), 0);
+    return v;
+}
+
+static std::string ref_label(std::uint64_t id) {
+    std::string s;
+    do {
+        int d = id % 26;
+        s.push_back(char('A' + d));
+        id /= 26;
+        if (id)
+            --id;
+    } while (id != 0);
+
+    std::reverse(s.begin(), s.end());
+    return s;
 }
 
 struct VecHash {
@@ -48,13 +61,13 @@ TEST_CASE("Pow3 – matches 3^k for all k") {
     for (int k = 0; k <= MAX_S; ++k)
         REQUIRE(Pow3[k] == ipow(3, k));
     for (int k = 0; k < MAX_S; ++k)
-        REQUIRE(Pow3[k + 1] / Pow3[k] == u128(3));
+        REQUIRE(Pow3[k + 1] / Pow3[k] == bigint(3));
 }
 // ─────────────────────────────────────────────────────────────
 // Bell
 // ─────────────────────────────────────────────────────────────
 TEST_CASE("Bell – triangle recomputation") {
-    std::array<u128, MAX_S + 1> ref{};
+    std::array<bigint, MAX_S + 1> ref{};
     ref[0] = 1;
     for (int n = 1; n <= MAX_S; ++n)
         for (int k = 0; k <= n - 1; ++k)
@@ -67,7 +80,7 @@ TEST_CASE("Bell – triangle recomputation") {
 // C   (shape-count table)
 // ─────────────────────────────────────────────────────────────
 TEST_CASE("C – triple recursion check") {
-    std::array<std::array<u128, MAX_U + 1>, MAX_S + 1> ref{};
+    std::array<std::array<bigint, MAX_U + 1>, MAX_S + 1> ref{};
     ref[1][0] = 1;
     for (int s = 1; s <= MAX_S; ++s)
         for (int u = 1; u <= MAX_U; ++u)
@@ -89,7 +102,7 @@ TEST_CASE("C – triple recursion check") {
 TEST_CASE("DP_RGS – recurrence & Bell link") {
     for (int len = 1; len <= MAX_S; ++len)
         for (int m = 0; m <= MAX_S; ++m) {
-            u128 rhs = 0;
+            bigint rhs = 0;
             for (int v = 0; v <= m + 1; ++v)
                 rhs += DP_RGS[len - 1][std::max(m, v)];
             REQUIRE(DP_RGS[len][m] == rhs);
@@ -102,7 +115,7 @@ TEST_CASE("DP_RGS – recurrence & Bell link") {
 // ─────────────────────────────────────────────────────────────
 TEST_CASE("Wn – closed-form cross-check") {
     for (int n = 0; n <= MAX_N; ++n) {
-        u128 w = 0;
+        bigint w = 0;
         for (int u = 0; u <= n && u <= MAX_U; ++u) {
             int s = n - u + 1, b = n - u;
             if (s < 1 || s > MAX_S)
@@ -116,42 +129,59 @@ TEST_CASE("prefixN – cumulative property") {
     REQUIRE(Wn[0] == prefixN[0]);
     for (int n = 1; n <= MAX_N; ++n)
         REQUIRE(prefixN[n] == prefixN[n - 1] + Wn[n]);
-    REQUIRE(prefixN[MAX_N] > u128(0));
+    REQUIRE(prefixN[MAX_N] > bigint(0));
+}
+// ─────────────────────────────────────────────────────────────
+// Labels
+// ─────────────────────────────────────────────────────────────
+TEST_CASE("Labels – bijective base-26 table") {
+    REQUIRE(Labels[0] == "A");
+    REQUIRE(Labels[1] == "B");
+    REQUIRE(Labels[25] == "Z");
+    REQUIRE(Labels[26] == "AA");
+    REQUIRE(Labels[27] == "AB");
+    REQUIRE(Labels[51] == "AZ");
+    REQUIRE(Labels[52] == "BA");
+
+    for (std::size_t i = 0; i < kMaxLabels; ++i)
+        REQUIRE(Labels[i] == ref_label(i));
 }
 // ─────────────────────────────────────────────────────────────
 // to_string
 // ─────────────────────────────────────────────────────────────
 TEST_CASE("to_string – round-trip small & large") {
-    REQUIRE(to_string(u128(0)) == "0");
-    REQUIRE(to_string(u128(12345678901234567890ULL)) == "12345678901234567890");
-    REQUIRE(to_string(u128(1) << 127) ==
+    REQUIRE(to_string(bigint(0)) == "0");
+    REQUIRE(to_string(bigint(12345678901234567890ULL)) ==
+            "12345678901234567890");
+    REQUIRE(to_string(bigint(1) << 127) ==
             "170141183460469231731687303715884105728");
 }
+
 // ─────────────────────────────────────────────────────────────
 // bit_length
 // ─────────────────────────────────────────────────────────────
-TEST_CASE("bit_length – edge cases") {
-    REQUIRE(bit_length(u128(0)) == 0);
-    REQUIRE(bit_length(u128(1)) == 1);
-    REQUIRE(bit_length(u128(2)) == 2);
-    REQUIRE(bit_length((u128(1) << 127) - 1) == 127);
-    REQUIRE(bit_length(u128(1) << 127) == 128);
-}
-// ─────────────────────────────────────────────────────────────
-// to_string & bit_length (fuzz)
-// ─────────────────────────────────────────────────────────────
-TEST_CASE("to_string/bit_length – 1 000 pseudo-random values") {
-    u128 x = 17;
-    for (int i = 0; i < 1000; ++i) {
-        x = x * 6364136223846793005ULL + 1442695040888963407ULL;
-        x ^= x << 37;
-        auto s = to_string(x);
-        u128 y = 0;
-        for (char c : s)
-            y = y * 10 + (c - '0');
-        REQUIRE(y == x);
-        REQUIRE(bit_length(y) == bit_length(x));
+TEST_CASE("bit_length – trivial & power-of-two cases") {
+    // zero is the only value whose bit-length is 0
+    REQUIRE(bit_length(bigint(0)) == 0);
+
+    // exact powers of two
+    for (int k = 0; k <= 512; k += 73) {  // a few sparse exponents
+        bigint p2 = bigint(1) << k;       // 2^k
+        REQUIRE(bit_length(p2) == k + 1); // leading ‘1’ lives at bit k
+        REQUIRE(bit_length(p2 - 1) == k); // one less uses exactly k bits
     }
+}
+
+TEST_CASE("bit_length – random composite values") {
+    const std::pair<bigint, int> samples[] = {
+        {bigint("12345678901234567890"), 64},
+        {(bigint(1) << 127) + 1, 128},
+        {(bigint(1) << 255) - 123456789, 255},
+        {(bigint(1) << 1000) + (bigint(1) << 500) + 7, 1001},
+    };
+
+    for (auto [v, expect] : samples)
+        REQUIRE(bit_length(v) == expect);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -166,8 +196,8 @@ TEST_CASE("unrank_rgs – first & last for len=3") {
 TEST_CASE("unrank_rgs – bijection for len≤5") {
     for (int len = 1; len <= 5; ++len) {
         std::unordered_set<std::vector<int>, VecHash> seen;
-        u128 total = DP_RGS[len][0];
-        for (u128 k = 0; k < total; ++k)
+        bigint total = DP_RGS[len][0];
+        for (bigint k = 0; k < total; ++k)
             REQUIRE(seen.insert(unrank_rgs(len, k)).second);
         REQUIRE(seen.size() == static_cast<std::size_t>(total));
     }
@@ -185,38 +215,47 @@ TEST_CASE("unrank_shape – enumeration matches C for s≤4,u≤2") {
     for (int s = 1; s <= 4; ++s)
         for (int u = 0; u <= 2; ++u) {
             std::unordered_set<std::string> seen;
-            u128 total = C[s][u];
-            for (u128 k = 0; k < total; ++k)
+            bigint total = C[s][u];
+            for (bigint k = 0; k < total; ++k)
                 REQUIRE(seen.insert(unrank_shape(s, u, k)).second);
             REQUIRE(seen.size() == static_cast<std::size_t>(total));
         }
 }
+
 // ─────────────────────────────────────────────────────────────
 // emit_expr
 // ─────────────────────────────────────────────────────────────
 TEST_CASE("emit_expr – simple signatures") {
-    REQUIRE(emit_expr("BLL", 0, 1 * 26 + 0) == "AND(A,B)");
-    REQUIRE(emit_expr("UL", 0, 0) == "NOT(A)");
+    REQUIRE(emit_expr("BLL", /*opIdx*/ 0,
+                      /*labels*/ std::vector<int>{0, 1}) == "AND(A,B)");
+
+    REQUIRE(emit_expr("UL", 0, std::vector<int>{0}) == "NOT(A)");
 }
+
 TEST_CASE("emit_expr – structure recoverable") {
-    struct T {
+    struct sample {
         std::string sig;
-        u128 op;
-        u128 lbl;
+        bigint op;
     };
-    const T cases[] = {{"BLL", 5, 12}, {"UL", 0, 0}, {"BUL", 1, 7}};
-    for (auto &d : cases) {
-        auto txt = emit_expr(d.sig, d.op, d.lbl);
-        auto rec = strip(txt);
-        for (char &c : rec) {
-            if (c >= 'A' && c <= 'Z')
-                c = 'L';
-            else if (c == 'N')
-                c = 'U';
-            else
-                c = 'B';
+    const sample cases[] = {{"BLL", 5}, {"UL", 0}, {"BUL", 1}};
+
+    for (auto const &c : cases) {
+        std::size_t leaves = std::count(c.sig.begin(), c.sig.end(), 'L');
+        auto txt = emit_expr(c.sig, c.op, make_labels(leaves));
+
+        std::string rec;
+        rec.reserve(txt.size());
+        for (char ch : txt) {
+            if (ch == '(' || ch == ')' || ch == ',')
+                continue;
+            if ('A' <= ch && ch <= 'Z')
+                rec.push_back('L');
+            else if (ch == 'N')
+                rec.push_back('U');
+            else /* A,O,X,R,D */
+                rec.push_back('B');
         }
-        REQUIRE(rec.substr(0, d.sig.size()) == d.sig);
+        REQUIRE(rec.substr(0, c.sig.size()) == c.sig);
     }
 }
 // ─────────────────────────────────────────────────────────────
@@ -247,7 +286,7 @@ static int internal_size(std::string_view e) {
 }
 TEST_CASE("nth_expression – uniqueness & rule for first 10") {
     std::unordered_set<std::string> seen;
-    for (u128 i = 0; i < 10; ++i) {
+    for (bigint i = 0; i < 10; ++i) {
         auto e = nth_expression(i);
         REQUIRE(seen.insert(e).second);
         REQUIRE(neighbour_ok(e));
@@ -255,6 +294,6 @@ TEST_CASE("nth_expression – uniqueness & rule for first 10") {
 }
 TEST_CASE("nth_expression – size matches rank-partition for n≤7") {
     for (int n = 0; n <= 7; ++n)
-        for (u128 idx = (n ? prefixN[n - 1] : 0); idx < prefixN[n]; ++idx)
+        for (bigint idx = (n ? prefixN[n - 1] : 0); idx < prefixN[n]; ++idx)
             REQUIRE(internal_size(nth_expression(idx)) == n);
 }

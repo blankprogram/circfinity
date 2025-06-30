@@ -1,25 +1,24 @@
 #ifndef COMPUTE_H
 #define COMPUTE_H
 
+#include <boost/multiprecision/cpp_int.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
+using bigint = boost::multiprecision::cpp_int;
 
-using u128 = unsigned __int128;
+std::string to_string(bigint x);
 
-inline constexpr int ALPHA = 26;
+std::vector<int> unrank_rgs(int len, bigint k);
 
-std::string to_string(u128 x);
+int bit_length(const bigint &v) noexcept;
 
-int bit_length(u128 x) noexcept;
+std::string unrank_shape(int s, int u, bigint k);
 
-std::vector<int> unrank_rgs(int len, u128 k);
+std::string emit_expr(const std::string &signature, bigint opIndex,
+                      const std::vector<int> &labels);
 
-std::string unrank_shape(int s, int u, u128 k);
-
-std::string emit_expr(const std::string &sig, u128 opIdx, u128 lblIdx);
-
-std::string nth_expression(u128 n);
+std::string nth_expression(bigint n);
 
 bool neighbour_ok(std::string_view expr);
 
