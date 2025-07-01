@@ -1,10 +1,7 @@
 #include "compute_data.h"
 #include <array>
 #include <cassert>
-#include <chrono>
 #include <compute.h>
-#include <iomanip>
-#include <iostream>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -146,54 +143,4 @@ bool neighbour_ok(std::string_view e) {
 
 int bit_length(const bigint &v) noexcept {
     return v == 0 ? 0 : boost::multiprecision::msb(v) + 1;
-}
-
-int main() {
-
-    const bigint PRINT = 100;
-    std::unordered_set<std::string> seen;
-
-    if (PRINT <= std::numeric_limits<std::size_t>::max())
-        seen.reserve(PRINT.convert_to<std::size_t>());
-
-    bool ok = true;
-    const auto t0 = std::chrono::high_resolution_clock::now();
-
-    for (bigint i = 0; i < PRINT; ++i) {
-        const std::string expr = nth_expression(i);
-        std::cout << '#' << to_string(i + 1) << ": " << expr << '\n';
-
-        if (!seen.insert(expr).second)
-            std::cerr << "DUPLICATE @ rank " << to_string(i) << '\n';
-
-        if (!neighbour_ok(expr)) {
-            ok = false;
-            std::cerr << "NEIGHBOUR RULE VIOLATION @ rank " << to_string(i)
-                      << '\n';
-        }
-    }
-
-    const bigint tot = prefixN[MAX_N];
-    const bigint last = tot - 1;
-
-    const int bits = bit_length(last);
-    const double pct = bits * 100.0 / 128.0;
-
-    std::cout << "\nHighest rank uses " << bits << " /128 bits (" << std::fixed
-              << std::setprecision(3) << pct << "%)\n\n";
-
-    std::cout << '#' << to_string(tot) << ": " << nth_expression(last)
-              << "\n\n";
-
-    const double ms = std::chrono::duration<double, std::milli>(
-                          std::chrono::high_resolution_clock::now() - t0)
-                          .count();
-
-    std::cout << std::fixed << std::setprecision(3) << "Printed "
-              << to_string(PRINT) << " expressions in " << ms << " ms\n";
-
-    std::cout << (seen.size() == PRINT ? "No duplicates : )\n"
-                                       : "Duplicates found : (\n");
-    std::cout << (ok ? "All expressions satisfy neighbour rule : )\n"
-                     : "Neighbour-rule violations found : (\n");
 }

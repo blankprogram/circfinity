@@ -10,7 +10,6 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 add_compile_options(-Wall -Wextra)
 
 find_program(CCACHE_PROGRAM ccache)
@@ -22,24 +21,30 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 
 add_library(u128 INTERFACE)
 target_include_directories(u128 INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_options(u128 INTERFACE $<$<CONFIG:Release>:-O3;-march=native>)
-target_link_options(u128 INTERFACE $<$<CONFIG:Release>:-flto>)
 
 add_library(compute_lib src/compute.cpp)
-target_link_libraries(compute_lib PRIVATE u128)
 target_include_directories(compute_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(compute_lib PRIVATE u128)
 
-add_executable(compute src/compute.cpp)
-target_link_libraries(compute PRIVATE u128)
+add_executable(wasm_main src/wasm_main.cpp)
+target_link_libraries(wasm_main PRIVATE compute_lib u128)
 
-find_package(Catch2 3 REQUIRED)
+set_property(TARGET wasm_main PROPERTY LINK_FLAGS
+  "--bind -s MODULARIZE=1 -s EXPORT_NAME=createModule"
+)
 
-add_executable(test_u128 tests/test_uint128.cpp)
-target_link_libraries(test_u128 PRIVATE u128 Catch2::Catch2WithMain)
+set_target_properties(wasm_main PROPERTIES SUFFIX ".js")
 
-add_executable(test_compute tests/test_compute.cpp)
-target_link_libraries(test_compute PRIVATE compute_lib u128 Catch2::Catch2WithMain)
 
-enable_testing()
-add_test(NAME uint128_tests COMMAND test_u128)
-add_test(NAME compute_tests COMMAND test_compute)
+add_custom_command(TARGET wasm_main POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/frontend/public
+
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_BINARY_DIR}/wasm_main.js
+    ${CMAKE_CURRENT_SOURCE_DIR}/frontend/public/wasm_main.js
+
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_BINARY_DIR}/wasm_main.wasm
+    ${CMAKE_CURRENT_SOURCE_DIR}/frontend/public/wasm_main.wasm
+)
