@@ -63,50 +63,34 @@ std::string unrank_shape(int s, int u, bigint k) {
     }
     throw;
 }
-
-/* emit fully-parenthesised infix, uses fixed array as stack */
+/* emit fully- paranthesised infix */
 std::string emit_expr(const std::string &sig, bigint opIdx,
                       const std::vector<int> &lbl) {
-    static constexpr char OPS[] = "AND(OR(XOR(";
-    static constexpr uint8_t off[3] = {0, 4, 7}, len[3] = {4, 3, 4};
-
-    std::string out;
-    out.reserve(64);
-
-    std::array<char, 2 * MAX_S + MAX_U + 8> st{};
-    int top = 0;
+    static constexpr const char *OPSTR[3] = {"AND", "OR", "XOR"};
     size_t sigPos = 0, lblPos = 0;
-
-    auto nextOp = [&] {
-        int v = int(opIdx % 3);
-        opIdx /= 3;
-        return v;
+    std::string out;
+    out.reserve(sig.size() * 4);
+    std::function<void()> dfs = [&]() {
+        char t = sig[sigPos++];
+        if (t == 'L') {
+            out += Labels[lbl[lblPos++]];
+        } else if (t == 'U') {
+            out += "NOT(";
+            dfs();
+            out += ')';
+        } else {
+            int o = int(opIdx % 3);
+            opIdx /= 3;
+            out += OPSTR[o];
+            out += '(';
+            dfs();
+            out += ',';
+            dfs();
+            out += ')';
+        }
     };
 
-    while (top >= 0) {
-        if (st[top] == 0) {
-            char t = sig[sigPos++];
-            st[top] = 1;
-
-            if (t == 'L') {
-                out += Labels[lbl[lblPos++]];
-                --top;
-            } else if (t == 'U') {
-                out.append("NOT(", 4);
-                st[++top] = ')';
-                st[++top] = 0;
-            } else {
-                int o = nextOp();
-                out.append(&OPS[off[o]], len[o]);
-                st[++top] = ')';
-                st[++top] = 0;
-                st[++top] = ',';
-                st[++top] = 0;
-            }
-        } else {
-            out.push_back(st[top--]);
-        }
-    }
+    dfs();
     return out;
 }
 /* N ↦ expression, enumeration order = by total size n then lexicographic */
@@ -165,6 +149,7 @@ int bit_length(const bigint &v) noexcept {
 }
 
 int main() {
+
     const bigint PRINT = 100;
     std::unordered_set<std::string> seen;
 

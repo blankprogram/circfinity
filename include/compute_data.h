@@ -9,6 +9,7 @@ constexpr int MAX_S = 100;
 constexpr int MAX_U = 100;
 constexpr int MAX_N = MAX_S - 1 + MAX_U;
 constexpr std::size_t kMaxLabels = MAX_S * 2;
+
 /* 3^k table – operator choices per binary node */
 inline const auto Pow3 = [] {
     std::array<bigint, MAX_S + 1> a{};
