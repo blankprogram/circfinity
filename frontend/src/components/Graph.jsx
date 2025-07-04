@@ -11,7 +11,10 @@ function extractVariables(tree, vars = new Set()) {
   if (typeof tree === "string") vars.add(tree);
   else if (tree.type === "VAR") vars.add(tree.value);
   else if (tree.type === "NOT") extractVariables(tree.child, vars);
-  else extractVariables(tree.left, vars) && extractVariables(tree.right, vars);
+  else {
+    extractVariables(tree.left, vars);
+    extractVariables(tree.right, vars);
+  }
   return vars;
 }
 
@@ -46,7 +49,10 @@ function treeToElkGraph(tree, id = { current: 0 }) {
 
     if (!isLeaf) {
       if (node.type === "NOT") walk(node.child, thisId);
-      else (walk(node.left, thisId), walk(node.right, thisId));
+      else {
+        walk(node.left, thisId);
+        walk(node.right, thisId);
+      }
     }
   }
 
@@ -81,7 +87,6 @@ async function layoutWithElk(nodes, edges, varStates) {
   return layout.children.map((node) => {
     const isLeaf = node.nodeType === "leaf";
     const isOn = varStates[node.label] ?? true;
-
     return {
       id: node.id,
       data: { label: node.label, isLeaf },
@@ -95,63 +100,91 @@ async function layoutWithElk(nodes, edges, varStates) {
   });
 }
 
-function GraphInner({ tree }) {
+function GraphInner({ tree, wasm, n, onEvaluate, onTruthTable }) {
   const { fitView } = useReactFlow();
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [varStates, setVarStates] = useState({});
 
-  const variables = useMemo(() => Array.from(extractVariables(tree)), [tree]);
-
-  const layoutAndSetGraph = async (varStates) => {
-    const { nodes: rawNodes, edges: rawEdges } = treeToElkGraph(tree);
-    const laidOutNodes = await layoutWithElk(rawNodes, rawEdges, varStates);
-    setNodes(laidOutNodes);
-    setEdges(
-      rawEdges.map((e) => ({
-        id: e.id,
-        source: e.sources[0],
-        target: e.targets[0],
-        type: "straight",
-      })),
-    );
-    requestAnimationFrame(() => fitView({ padding: 0.3 }));
-  };
+  const variables = useMemo(
+    () => Array.from(extractVariables(tree)).sort(),
+    [tree],
+  );
 
   useEffect(() => {
     if (!tree) return;
     const initial = Object.fromEntries(variables.map((v) => [v, true]));
     setVarStates(initial);
-    layoutAndSetGraph(initial);
+
+    const run = async () => {
+      const { nodes: rawNodes, edges: rawEdges } = treeToElkGraph(tree);
+      const laidOutNodes = await layoutWithElk(rawNodes, rawEdges, initial);
+      setNodes(laidOutNodes);
+      setEdges(
+        rawEdges.map((e) => ({
+          id: e.id,
+          source: e.sources[0],
+          target: e.targets[0],
+          type: "straight",
+        })),
+      );
+
+      requestAnimationFrame(() => fitView({ padding: 0.3 }));
+    };
+
+    run();
   }, [tree, variables, fitView]);
 
   useEffect(() => {
     if (!tree) return;
-    layoutAndSetGraph(varStates);
-  }, [varStates, tree]);
+
+    setNodes((prevNodes) =>
+      prevNodes.map((node) => {
+        const isLeaf = node.data?.isLeaf;
+        const label = node.data?.label;
+        const isOn = varStates[label] ?? true;
+        return {
+          ...node,
+          style: getNodeStyle(isLeaf, isOn),
+        };
+      }),
+    );
+
+    try {
+      const result = wasm.evaluate_expr_json(n, JSON.stringify(varStates));
+      onEvaluate?.(result);
+      onTruthTable?.([{ inputs: { ...varStates }, output: result }]);
+    } catch (err) {
+      console.error("Eval failed", err);
+      onEvaluate?.(null);
+      onTruthTable?.([]);
+    }
+  }, [varStates, tree, wasm, n]);
 
   return (
-    <div className="relative w-full h-full">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        fitView
-        panOnScroll
-        zoomOnScroll
-        minZoom={0.1}
-        maxZoom={2}
-        className="w-full h-full"
-        onNodeClick={(_, node) => {
-          const { label, isLeaf } = node.data || {};
-          if (isLeaf && label && label in varStates) {
-            setVarStates((prev) => ({
-              ...prev,
-              [label]: !prev[label],
-            }));
-          }
-        }}
-      />
-      <div className="absolute bottom-0 left-0 right-0 bg-[#fdf9ee] border-t border-[#ccc7b7] px-4 py-2 flex flex-wrap gap-2 justify-center">
+    <div className="w-full h-full flex flex-col">
+      <div className="flex-1">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          fitView
+          panOnScroll
+          zoomOnScroll
+          minZoom={0.01}
+          maxZoom={2}
+          className="w-full h-full"
+          onNodeClick={(_, node) => {
+            const { label, isLeaf } = node.data || {};
+            if (isLeaf && label && label in varStates) {
+              setVarStates((prev) => ({
+                ...prev,
+                [label]: !prev[label],
+              }));
+            }
+          }}
+        />
+      </div>
+      <div className="bg-[#fdf9ee] border-t border-[#ccc7b7] px-4 py-2 flex flex-wrap gap-2 justify-center">
         {variables.map((v) => (
           <button
             key={v}
@@ -168,10 +201,10 @@ function GraphInner({ tree }) {
   );
 }
 
-export default function Graph({ tree }) {
+export default function Graph(props) {
   return (
     <ReactFlowProvider>
-      <GraphInner tree={tree} />
+      <GraphInner {...props} />
     </ReactFlowProvider>
   );
 }

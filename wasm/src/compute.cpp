@@ -17,6 +17,106 @@ std::string to_string(bigint x) {
     return {p, std::end(buf)};
 }
 
+// Minimal JSON parser for flat { "A": true, "B": false }
+std::unordered_map<std::string, bool> parse_input_map(const std::string &json) {
+    std::unordered_map<std::string, bool> result;
+    size_t i = 0;
+    auto skip_ws = [&]() {
+        while (i < json.size() && std::isspace(json[i]))
+            ++i;
+    };
+
+    skip_ws();
+    if (json[i] != '{')
+        throw std::runtime_error("Expected '{'");
+    ++i;
+
+    while (true) {
+        skip_ws();
+        if (json[i] == '}')
+            break;
+
+        if (json[i] != '"')
+            throw std::runtime_error("Expected key string");
+        ++i;
+        std::string key;
+        while (i < json.size() && json[i] != '"') {
+            key += json[i++];
+        }
+        if (i == json.size() || json[i] != '"')
+            throw std::runtime_error("Unterminated key");
+        ++i;
+
+        skip_ws();
+        if (json[i++] != ':')
+            throw std::runtime_error("Expected ':' after key");
+        skip_ws();
+
+        if (json.compare(i, 4, "true") == 0) {
+            result[key] = true;
+            i += 4;
+        } else if (json.compare(i, 5, "false") == 0) {
+            result[key] = false;
+            i += 5;
+        } else {
+            throw std::runtime_error("Expected true/false value");
+        }
+
+        skip_ws();
+        if (json[i] == ',') {
+            ++i;
+        } else if (json[i] == '}') {
+            break;
+        } else {
+            throw std::runtime_error("Expected ',' or '}'");
+        }
+    }
+
+    return result;
+}
+
+bool evaluate_expr_tree(const ExprTree *node,
+                        const std::unordered_map<std::string, bool> &inputs) {
+    if (!node)
+        throw std::runtime_error("Null node in evaluation");
+
+    if (node->type == "VAR") {
+        auto it = inputs.find(node->value);
+        if (it == inputs.end())
+            throw std::runtime_error("Missing input for variable: " +
+                                     node->value);
+        return it->second;
+    }
+
+    if (node->type == "NOT") {
+        return !evaluate_expr_tree(node->left.get(), inputs);
+    }
+
+    bool lhs = evaluate_expr_tree(node->left.get(), inputs);
+    bool rhs = evaluate_expr_tree(node->right.get(), inputs);
+
+    if (node->type == "AND")
+        return lhs && rhs;
+    if (node->type == "OR")
+        return lhs || rhs;
+    if (node->type == "XOR")
+        return lhs ^ rhs;
+
+    throw std::runtime_error("Unknown node type: " + node->type);
+}
+std::string evaluate_expr_json(bigint N, const std::string &jsonInputs) {
+    auto inputs = parse_input_map(jsonInputs);
+
+    std::string sig;
+    bigint opIdx;
+    std::vector<int> labels;
+    compute_expr_components(N, sig, opIdx, labels);
+    auto [_, tree] = emit_expr_both(sig, opIdx, labels);
+
+    bool result = evaluate_expr_tree(tree.get(), inputs);
+    return result ? "true" : "false";
+}
+
 /* serialises a logic expression tree to minimal JSON */
 std::string serialise_tree(const ExprTree *node) {
     if (!node)

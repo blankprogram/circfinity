@@ -27,7 +27,7 @@ std::pair<std::string, std::unique_ptr<ExprTree>>
 emit_expr_both(const std::string &sig, bigint opIdx,
                const std::vector<int> &labels);
 std::string serialise_tree(const ExprTree *node);
-
+std::string evaluate_expr_json(bigint N, const std::string &jsonInputs);
 std::string get_expr(bigint n);
 std::string get_expr_full(bigint n);
 #endif // COMPUTE_H
