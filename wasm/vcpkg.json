@@ -4,6 +4,7 @@
   "dependencies": [
     "boost-filesystem",
     "boost-system",
-    "boost-multiprecision"
+    "boost-multiprecision",
+    "catch2"
   ]
 }
