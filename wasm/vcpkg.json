@@ -1,0 +1,9 @@
+{
+  "name": "circfinity",
+  "version": "0.1.0",
+  "dependencies": [
+    "boost-filesystem",
+    "boost-system",
+    "boost-multiprecision"
+  ]
+}

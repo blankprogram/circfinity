@@ -2,3 +2,7 @@ build/
 .cache/
 .clangd
 include/boost
+
+
+/frontend/public/*.js
+/frontend/public/*.wasm
