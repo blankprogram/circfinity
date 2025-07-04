@@ -100,6 +100,20 @@ static std::string recover_sig(std::string_view txt) {
     return rec;
 }
 
+static bool neighbour_ok(std::string_view e) {
+    uint32_t m = 0;
+    auto a = [](char c) { return c >= 'A' && c <= 'Z'; };
+    for (size_t i = 0; i < e.size(); ++i)
+        if (a(e[i]) && !(i && a(e[i - 1])) &&
+            !(i + 1 < e.size() && a(e[i + 1])))
+            m |= 1u << (e[i] - 'A');
+    for (int i = 1; i < 26; ++i)
+        if ((m >> i) & 1u && !(m >> (i - 1) & 1u) &&
+            !(i < 25 && (m >> (i + 1) & 1u)))
+            return false;
+    return true;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Pow3
 // ─────────────────────────────────────────────────────────────
@@ -208,30 +222,45 @@ TEST_CASE("to_string – round-trip small & large") {
 }
 
 // ─────────────────────────────────────────────────────────────
-// bit_length
+// serialise_tree
 // ─────────────────────────────────────────────────────────────
-TEST_CASE("bit_length – trivial & power-of-two cases") {
-    // zero is the only value whose bit-length is 0
-    REQUIRE(bit_length(bigint(0)) == 0);
 
-    // exact powers of two
-    for (int k = 0; k <= 512; k += 73) {  // a few sparse exponents
-        bigint p2 = bigint(1) << k;       // 2^k
-        REQUIRE(bit_length(p2) == k + 1); // leading ‘1’ lives at bit k
-        REQUIRE(bit_length(p2 - 1) == k); // one less uses exactly k bits
-    }
+TEST_CASE("serialise_tree – null node") {
+    REQUIRE(serialise_tree(nullptr) == "null");
 }
 
-TEST_CASE("bit_length – random composite values") {
-    const std::pair<bigint, int> samples[] = {
-        {bigint("12345678901234567890"), 64},
-        {(bigint(1) << 127) + 1, 128},
-        {(bigint(1) << 255) - 123456789, 255},
-        {(bigint(1) << 1000) + (bigint(1) << 500) + 7, 1001},
-    };
+TEST_CASE("serialise_tree – VAR node") {
+    ExprTree var{"VAR", "X"};
+    REQUIRE(serialise_tree(&var) == "\"X\"");
+}
 
-    for (auto [v, expect] : samples)
-        REQUIRE(bit_length(v) == expect);
+TEST_CASE("serialise_tree – NOT(VAR)") {
+    auto var = std::make_unique<ExprTree>("VAR", "A");
+    ExprTree not_node{"NOT", "", std::move(var)};
+    REQUIRE(serialise_tree(&not_node) == "{\"type\":\"NOT\",\"child\":\"A\"}");
+}
+
+TEST_CASE("serialise_tree – AND(VAR, VAR)") {
+    auto l = std::make_unique<ExprTree>("VAR", "A");
+    auto r = std::make_unique<ExprTree>("VAR", "B");
+    ExprTree and_node{"AND", "", std::move(l), std::move(r)};
+    REQUIRE(serialise_tree(&and_node) ==
+            "{\"type\":\"AND\",\"left\":\"A\",\"right\":\"B\"}");
+}
+
+TEST_CASE("serialise_tree – nested XOR(NOT(A), OR(B, C))") {
+    auto l = std::make_unique<ExprTree>("VAR", "A");
+    auto not_l = std::make_unique<ExprTree>("NOT", "", std::move(l));
+
+    auto b = std::make_unique<ExprTree>("VAR", "B");
+    auto c = std::make_unique<ExprTree>("VAR", "C");
+    auto or_r =
+        std::make_unique<ExprTree>("OR", "", std::move(b), std::move(c));
+
+    ExprTree xor_node{"XOR", "", std::move(not_l), std::move(or_r)};
+    REQUIRE(serialise_tree(&xor_node) ==
+            "{\"type\":\"XOR\",\"left\":{\"type\":\"NOT\",\"child\":\"A\"},"
+            "\"right\":{\"type\":\"OR\",\"left\":\"B\",\"right\":\"C\"}}");
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -313,35 +342,72 @@ TEST_CASE("emit_expr – structure recoverable") {
 }
 
 // ─────────────────────────────────────────────────────────────
-// neighbour_ok
+// emit_expr_both
 // ─────────────────────────────────────────────────────────────
-TEST_CASE("neighbour_ok – positive & negative examples") {
-    REQUIRE(neighbour_ok("AND(A,B)"));
-    REQUIRE(!neighbour_ok("AND(A,C)"));
-    REQUIRE(neighbour_ok("A"));
+
+TEST_CASE("emit_expr_both – single variable") {
+    auto [expr, tree] = emit_expr_both("L", 0, {0});
+    REQUIRE(expr == "A");
+    REQUIRE(tree->type == "VAR");
+    REQUIRE(tree->value == "A");
+    REQUIRE(!tree->left);
+    REQUIRE(!tree->right);
 }
-TEST_CASE("neighbour_ok – every lonely letter rejected") {
-    for (char c = 'B'; c <= 'Z'; ++c) {
-        std::string s(1, c);
-        REQUIRE(!neighbour_ok(s));
-    }
+
+TEST_CASE("emit_expr_both – NOT expression") {
+    auto [expr, tree] = emit_expr_both("UL", 0, {1});
+    REQUIRE(expr == "NOT(B)");
+    REQUIRE(tree->type == "NOT");
+    REQUIRE(tree->left);
+    REQUIRE(tree->left->type == "VAR");
+    REQUIRE(tree->left->value == "B");
+    REQUIRE(!tree->right);
+}
+
+TEST_CASE("emit_expr_both – AND(A,B)") {
+    auto [expr, tree] = emit_expr_both("BLL", 0, {0, 1});
+    REQUIRE(expr == "AND(A,B)");
+    REQUIRE(tree->type == "AND");
+    REQUIRE(tree->left->value == "A");
+    REQUIRE(tree->right->value == "B");
+}
+
+TEST_CASE("emit_expr_both – XOR(NOT(A),B)") {
+    auto [expr, tree] = emit_expr_both("BULL", 2, {0, 1});
+    REQUIRE(expr == "XOR(NOT(A),B)");
+    REQUIRE(tree->type == "XOR");
+    REQUIRE(tree->left->type == "NOT");
+    REQUIRE(tree->left->left->value == "A");
+    REQUIRE(tree->right->value == "B");
+}
+
+TEST_CASE("emit_expr_both – opIdx decoding order") {
+    std::string sig = "BBLLL";
+    bigint op = 5;
+    auto [expr, tree] = emit_expr_both(sig, op, {0, 1, 2});
+    REQUIRE(expr == "XOR(OR(A,B),C)");
+    REQUIRE(tree->type == "XOR");
+    REQUIRE(tree->left->type == "OR");
+    REQUIRE(tree->left->left->value == "A");
+    REQUIRE(tree->left->right->value == "B");
+    REQUIRE(tree->right->value == "C");
 }
 // ─────────────────────────────────────────────────────────────
 // nth_expression
 // ─────────────────────────────────────────────────────────────
 TEST_CASE("nth_expression – uniqueness & rule for first 10") {
     std::unordered_set<std::string> seen;
-    for (bigint i = 0; i < 10; ++i) {
-        auto e = nth_expression(i);
+    for (bigint i = 0; i < 100; ++i) {
+        auto e = get_expr(i);
         REQUIRE(seen.insert(e).second);
         REQUIRE(neighbour_ok(e));
     }
 }
-TEST_CASE("nth_expression – size matches rank-partition for n≤7") {
+TEST_CASE("nth_expression – size matches rank-partition") {
     for (int n = 0; n <= 3; ++n)
 
         for (bigint idx = (n ? prefixN[n - 1] : 0); idx < prefixN[n]; ++idx) {
-            auto expr = nth_expression(idx);
+            auto expr = get_expr(idx);
             int got = internal_size(expr);
             INFO("n=" << n << " idx=" << idx << " expr=" << expr
                       << " size=" << got);

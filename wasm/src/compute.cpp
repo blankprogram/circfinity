@@ -2,11 +2,11 @@
 #include <array>
 #include <cassert>
 #include <compute.h>
+#include <memory>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
-/* bigint → decimal string, no heap */
+/* Converts bigint to decimal string (stack buffer, no heap) */
 std::string to_string(bigint x) {
     char buf[500];
     char *p = std::end(buf);
@@ -17,7 +17,23 @@ std::string to_string(bigint x) {
     return {p, std::end(buf)};
 }
 
-/* unrank restricted-growth string of length len */
+/* serialises a logic expression tree to minimal JSON */
+std::string serialise_tree(const ExprTree *node) {
+    if (!node)
+        return "null";
+    if (node->type == "VAR") {
+        return "\"" + node->value + "\"";
+    } else if (node->type == "NOT") {
+        return "{\"type\":\"NOT\",\"child\":" +
+               serialise_tree(node->left.get()) + "}";
+    } else {
+        return "{\"type\":\"" + node->type +
+               "\",\"left\":" + serialise_tree(node->left.get()) +
+               ",\"right\":" + serialise_tree(node->right.get()) + "}";
+    }
+}
+
+/* Unranks a restricted growth string (used for variable partitioning) */
 std::vector<int> unrank_rgs(int len, bigint k) {
     std::vector<int> r(len);
     int cur = 0;
@@ -36,7 +52,7 @@ std::vector<int> unrank_rgs(int len, bigint k) {
     return r;
 }
 
-/* unrank tree shape with s leaves, u unary nodes  → preorder code {L,U,B}* */
+/* Unranks a shape (preorder string of L/U/B) given leaf/unary count */
 std::string unrank_shape(int s, int u, bigint k) {
     if (s == 1)
         return u ? "U" + unrank_shape(1, u - 1, k) : "L";
@@ -60,13 +76,56 @@ std::string unrank_shape(int s, int u, bigint k) {
     }
     throw;
 }
-/* emit fully- paranthesised infix */
+
+/* Builds both expression string and tree from signature + operator/label
+ * indices */
+std::pair<std::string, std::unique_ptr<ExprTree>>
+emit_expr_both(const std::string &sig, bigint opIdx,
+               const std::vector<int> &lbl) {
+    static constexpr const char *OPSTR[3] = {"AND", "OR", "XOR"};
+    size_t sigPos = 0, lblPos = 0;
+    std::string out;
+    out.reserve(sig.size() * 4);
+
+    std::function<std::unique_ptr<ExprTree>()> dfs =
+        [&]() -> std::unique_ptr<ExprTree> {
+        char t = sig[sigPos++];
+        if (t == 'L') {
+            std::string v = Labels[lbl[lblPos++]];
+            out += v;
+            return std::make_unique<ExprTree>(ExprTree{"VAR", v});
+        } else if (t == 'U') {
+            out += "NOT(";
+            auto child = dfs();
+            out += ')';
+            return std::make_unique<ExprTree>(
+                ExprTree{"NOT", "", std::move(child)});
+        } else {
+            int o = int(opIdx % 3);
+            opIdx /= 3;
+            std::string op = OPSTR[o];
+            out += op + "(";
+            auto l = dfs();
+            out += ',';
+            auto r = dfs();
+            out += ')';
+            return std::make_unique<ExprTree>(
+                ExprTree{op, "", std::move(l), std::move(r)});
+        }
+    };
+
+    auto tree = dfs();
+    return {out, std::move(tree)};
+}
+
+/* builds the expression string */
 std::string emit_expr(const std::string &sig, bigint opIdx,
                       const std::vector<int> &lbl) {
     static constexpr const char *OPSTR[3] = {"AND", "OR", "XOR"};
     size_t sigPos = 0, lblPos = 0;
     std::string out;
     out.reserve(sig.size() * 4);
+
     std::function<void()> dfs = [&]() {
         char t = sig[sigPos++];
         if (t == 'L') {
@@ -74,24 +133,26 @@ std::string emit_expr(const std::string &sig, bigint opIdx,
         } else if (t == 'U') {
             out += "NOT(";
             dfs();
-            out += ')';
+            out += ")";
         } else {
             int o = int(opIdx % 3);
             opIdx /= 3;
             out += OPSTR[o];
-            out += '(';
+            out += "(";
             dfs();
-            out += ',';
+            out += ",";
             dfs();
-            out += ')';
+            out += ")";
         }
     };
 
     dfs();
     return out;
 }
-/* N ↦ expression, enumeration order = by total size n then lexicographic */
-std::string nth_expression(bigint N) {
+
+/* Computes shape, opIdx, and labels for nth expression */
+void compute_expr_components(bigint N, std::string &sig, bigint &opIdx,
+                             std::vector<int> &labels) {
     int n = 0, hi = MAX_N;
     while (n < hi) {
         int m = (n + hi) / 2;
@@ -104,7 +165,6 @@ std::string nth_expression(bigint N) {
         int s = n - u + 1, b = n - u;
         if (s > MAX_S || u > MAX_U)
             continue;
-
         bigint blk = C[s][u] * Pow3[b] * Bell[s];
         if (rem < blk) {
             sSel = s;
@@ -117,30 +177,30 @@ std::string nth_expression(bigint N) {
 
     bigint shapeIdx = rem / (Pow3[bSel] * Bell[sSel]);
     bigint tmp = rem % (Pow3[bSel] * Bell[sSel]);
-    bigint opIdx = tmp / Bell[sSel];
+    opIdx = tmp / Bell[sSel];
     bigint rgsIdx = tmp % Bell[sSel];
 
-    std::string sig = unrank_shape(sSel, uSel, shapeIdx);
-    std::vector<int> labels = unrank_rgs(sSel, rgsIdx);
+    sig = unrank_shape(sSel, uSel, shapeIdx);
+    labels = unrank_rgs(sSel, rgsIdx);
+}
+
+/* Returns expression string for index N */
+std::string get_expr(bigint N) {
+    std::string sig;
+    bigint opIdx;
+    std::vector<int> labels;
+    compute_expr_components(N, sig, opIdx, labels);
 
     return emit_expr(sig, opIdx, labels);
 }
 
-/* Hamming weight trick to check neighbour rule */
-bool neighbour_ok(std::string_view e) {
-    uint32_t m = 0;
-    auto a = [](char c) { return c >= 'A' && c <= 'Z'; };
-    for (size_t i = 0; i < e.size(); ++i)
-        if (a(e[i]) && !(i && a(e[i - 1])) &&
-            !(i + 1 < e.size() && a(e[i + 1])))
-            m |= 1u << (e[i] - 'A');
-    for (int i = 1; i < 26; ++i)
-        if ((m >> i) & 1u && !(m >> (i - 1) & 1u) &&
-            !(i < 25 && (m >> (i + 1) & 1u)))
-            return false;
-    return true;
-}
-
-int bit_length(const bigint &v) noexcept {
-    return v == 0 ? 0 : boost::multiprecision::msb(v) + 1;
+/* Returns expression string + serialised tree JSON for index N */
+std::string get_expr_full(bigint N) {
+    std::string sig;
+    bigint opIdx;
+    std::vector<int> labels;
+    compute_expr_components(N, sig, opIdx, labels);
+    auto [exprStr, tree] = emit_expr_both(sig, opIdx, labels);
+    return "{\"expr\":\"" + exprStr +
+           "\",\"tree\":" + serialise_tree(tree.get()) + "}";
 }
