@@ -14,7 +14,7 @@ struct ExprTree {
     std::unique_ptr<ExprTree> left;
     std::unique_ptr<ExprTree> right;
 };
-
+std::string evaluate_expr_full_json(bigint N, const std::string &jsonInputs);
 std::string to_string(bigint x);
 std::vector<int> unrank_rgs(int len, bigint k);
 std::string unrank_shape(int s, int u, bigint k);

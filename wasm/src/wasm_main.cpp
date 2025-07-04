@@ -21,10 +21,17 @@ std::string evaluate_expr_json_wrapper(std::string n_str,
     return evaluate_expr_json(N, jsonInputs);
 }
 
+std::string evaluate_expr_full_json_wrapper(std::string n_str,
+                                            const std::string &jsonInputs) {
+    bigint N(n_str);
+    return evaluate_expr_full_json(N, jsonInputs);
+}
+
 EMSCRIPTEN_BINDINGS(my_module) {
     emscripten::function("get_expr", &get_expr_wrapper);
     emscripten::function("get_expr_full", &get_expr_full_wrapper);
     emscripten::function("get_expr_count", &get_expr_count_wrapper);
-    emscripten::function("evaluate_expr_json",
-                         &evaluate_expr_json_wrapper); // 👈 USE WRAPPER
+    emscripten::function("evaluate_expr_json", &evaluate_expr_json_wrapper);
+    emscripten::function("evaluate_expr_full_json",
+                         &evaluate_expr_full_json_wrapper);
 }

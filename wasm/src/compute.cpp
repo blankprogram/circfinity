@@ -74,7 +74,68 @@ std::unordered_map<std::string, bool> parse_input_map(const std::string &json) {
 
     return result;
 }
+// Evaluates expression and computes it
+std::string evaluate_expr_full_json(bigint N, const std::string &jsonInputs) {
+    auto inputs = parse_input_map(jsonInputs);
 
+    std::string sig;
+    bigint opIdx;
+    std::vector<int> labels;
+    compute_expr_components(N, sig, opIdx, labels);
+    auto [_, tree] = emit_expr_both(sig, opIdx, labels);
+
+    std::unordered_map<const ExprTree *, std::string> id_map;
+    std::unordered_map<std::string, bool> result_map;
+    int id_counter = 0;
+
+    std::function<bool(const ExprTree *)> dfs =
+        [&](const ExprTree *node) -> bool {
+        if (!node)
+            throw std::runtime_error("Null node in evaluation");
+
+        std::string node_id = "n" + std::to_string(id_counter++);
+        id_map[node] = node_id;
+
+        bool val;
+        if (node->type == "VAR") {
+            auto it = inputs.find(node->value);
+            if (it == inputs.end())
+                throw std::runtime_error("Missing input for variable: " +
+                                         node->value);
+            val = it->second;
+        } else if (node->type == "NOT") {
+            val = !dfs(node->left.get());
+        } else {
+            bool lhs = dfs(node->left.get());
+            bool rhs = dfs(node->right.get());
+
+            if (node->type == "AND")
+                val = lhs && rhs;
+            else if (node->type == "OR")
+                val = lhs || rhs;
+            else if (node->type == "XOR")
+                val = lhs ^ rhs;
+            else
+                throw std::runtime_error("Unknown node type: " + node->type);
+        }
+
+        result_map[node_id] = val;
+        return val;
+    };
+
+    dfs(tree.get());
+
+    std::string json = "{";
+    bool first = true;
+    for (const auto &[ptr, name] : id_map) {
+        if (!first)
+            json += ",";
+        first = false;
+        json += "\"" + name + "\":" + (result_map[name] ? "true" : "false");
+    }
+    json += "}";
+    return json;
+}
 bool evaluate_expr_tree(const ExprTree *node,
                         const std::unordered_map<std::string, bool> &inputs) {
     if (!node)
