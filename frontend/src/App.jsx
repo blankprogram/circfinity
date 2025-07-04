@@ -1,56 +1,69 @@
-import React, { useEffect, useState } from 'react';
-import './index.css';
+import React, { useEffect, useState } from 'react'
+import { Routes, Route, useParams, Link, useNavigate } from 'react-router-dom'
+import './App.css'
 
-export default function App() {
-  const [mod, setMod] = useState(null);
-  const [expr, setExpr] = useState('');
-  const [input, setInput] = useState('');
-  const [count, setCount] = useState('…');
+function Home() {
+  const navigate = useNavigate()
+  const [input, setInput] = useState('')
+  const go = () => {
+    if (/^\d+$/.test(input)) navigate(`/${input}`)
+  }
+  return (
+    <div className="page">
+      <h2>Enter an index</h2>
+      <input
+        placeholder="42"
+        value={input}
+        onChange={e => setInput(e.target.value)}
+      />
+      <button onClick={go}>Go</button>
+    </div>
+  )
+}
+
+function Expr() {
+  let { n } = useParams()
+  const [mod, setMod] = useState(null)
+  const [expr, setExpr] = useState('…loading…')
+  const [count, setCount] = useState('…')
 
   useEffect(() => {
-    const script = document.createElement('script');
-    script.src = '/wasm_main.js';
-    script.onload = () => {
-      window.createModule().then((mod) => {
-        setMod(mod);
-        setCount(mod.get_expr_count());
-      });
-    };
-    document.body.appendChild(script);
-  }, []);
+    // load WASM once
+    const s = document.createElement('script')
+    s.src = '/wasm_main.js'
+    s.onload = () =>
+      window.createModule().then(m => {
+        setMod(m)
+        setCount(m.get_expr_count())
+      })
+    document.body.appendChild(s)
+  }, [])
 
-  const handleClick = () => {
-    if (!mod || !/^\d+$/.test(input)) {
-      setExpr('Invalid input');
-      return;
+  useEffect(() => {
+    if (mod) {
+      try {
+        setExpr(mod.get_expr(n))
+      } catch {
+        setExpr('Invalid index')
+      }
     }
-    try {
-      setExpr(mod.get_expr(input));
-    } catch (e) {
-      setExpr('Error: ' + e);
-    }
-  };
+  }, [mod, n])
 
   return (
-    <div className="min-h-screen bg-[#121212] text-[#f0f0f0] flex flex-col items-center justify-center font-sans px-4">
-      <h1 className="text-2xl mb-4">CircFinity</h1>
-
-      <div className="flex flex-col items-center gap-4 w-full max-w-[700px]">
-        <div className="flex">
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Enter index..." className="mr-2" />          
-            <button onClick={handleClick}>Get Expression</button>
-        </div>
-
-        <div className="text-left w-full text-sm text-gray-400">Total expressions:</div>
-        <pre className="bg-[#1a1a1a] text-[#f0f0f0] p-4 border border-gray-600 w-full whitespace-pre-wrap break-words rounded">
-          {count}
-        </pre>
-
-        <div className="text-left w-full text-sm text-gray-400">Expression:</div>
-        <pre className="bg-[#1a1a1a] text-[#f0f0f0] p-4 border border-gray-600 w-full whitespace-pre-wrap break-words rounded">
-          {expr}
-        </pre>
-      </div>
+    <div className="page">
+      <Link to="/">← Home</Link>
+      <h2>Expression #{n}</h2>
+      <p>Total expressions: {count}</p>
+      <pre>{expr}</pre>
     </div>
-  );
+  )
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Home />} />
+      <Route path="/:n" element={<Expr />} />
+    </Routes>
+  )
 }
