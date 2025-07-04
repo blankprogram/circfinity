@@ -1,24 +1,22 @@
 cmake_minimum_required(VERSION 3.21)
 project(circfinity-wasm LANGUAGES CXX)
 
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1)  
 include(CTest)
 enable_testing()
-
-set(CMAKE_CXX_STANDARD        23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS      OFF)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_program(CCACHE_PROGRAM ccache)
 if (CCACHE_PROGRAM)
   set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
 
-
-find_package(Boost REQUIRED
-  COMPONENTS filesystem system multiprecision
-)
-
+find_package(boost_filesystem CONFIG REQUIRED)
+find_package(boost_system CONFIG REQUIRED)
+find_package(boost_multiprecision CONFIG REQUIRED)
 
 add_library(compute_lib STATIC
   src/compute.cpp
