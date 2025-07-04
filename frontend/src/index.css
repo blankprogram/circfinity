@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+    color-scheme: light dark;
+    color: rgba(255, 255, 255, 0.87);
+    background-color: #242424;
+    line-height: 1.5;
+    font-weight: 400;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+  }
+
+  a {
+    @apply font-medium text-indigo-400 hover:text-indigo-300 no-underline;
+  }
+
+
+@layer base {
+  button {
+    @apply
+      px-4 py-2
+      text-white
+      bg-gray-800
+      rounded
+      border border-transparent
+      hover:border-purple-500
+      hover:bg-gray-700
+      focus:outline-none
+      focus:ring-2 focus:ring-purple-500
+      transition duration-200;
+  }
+}
+
+
+  input {
+    @apply text-base px-3 py-2 bg-[#1e1e1e] text-white border border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-gray-400;
+  }
+}

@@ -1,0 +1,146 @@
+#include "compute_data.h"
+#include <array>
+#include <cassert>
+#include <compute.h>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
+/* bigint → decimal string, no heap */
+std::string to_string(bigint x) {
+    char buf[500];
+    char *p = std::end(buf);
+    do {
+        *--p = char('0' + x % 10);
+        x /= 10;
+    } while (x);
+    return {p, std::end(buf)};
+}
+
+/* unrank restricted-growth string of length len */
+std::vector<int> unrank_rgs(int len, bigint k) {
+    std::vector<int> r(len);
+    int cur = 0;
+    for (int i = 0; i < len; ++i) {
+        for (int v = 0;; ++v) {
+            bigint cnt = DP_RGS[len - i - 1][std::max(cur, v)];
+            if (k < cnt) {
+                r[i] = v;
+                if (v == cur + 1)
+                    ++cur;
+                break;
+            }
+            k -= cnt;
+        }
+    }
+    return r;
+}
+
+/* unrank tree shape with s leaves, u unary nodes  → preorder code {L,U,B}* */
+std::string unrank_shape(int s, int u, bigint k) {
+    if (s == 1)
+        return u ? "U" + unrank_shape(1, u - 1, k) : "L";
+    if (u) {
+        bigint c = C[s][u - 1];
+        if (k < c)
+            return "U" + unrank_shape(s, u - 1, k);
+        k -= c;
+    }
+    for (int ls = 1; ls < s; ++ls) {
+        int rs = s - ls;
+        for (int u1 = 0; u1 <= u; ++u1) {
+            bigint block = C[ls][u1] * C[rs][u - u1];
+            if (k < block) {
+                bigint l = k / C[rs][u - u1], r = k % C[rs][u - u1];
+                return "B" + unrank_shape(ls, u1, l) +
+                       unrank_shape(rs, u - u1, r);
+            }
+            k -= block;
+        }
+    }
+    throw;
+}
+/* emit fully- paranthesised infix */
+std::string emit_expr(const std::string &sig, bigint opIdx,
+                      const std::vector<int> &lbl) {
+    static constexpr const char *OPSTR[3] = {"AND", "OR", "XOR"};
+    size_t sigPos = 0, lblPos = 0;
+    std::string out;
+    out.reserve(sig.size() * 4);
+    std::function<void()> dfs = [&]() {
+        char t = sig[sigPos++];
+        if (t == 'L') {
+            out += Labels[lbl[lblPos++]];
+        } else if (t == 'U') {
+            out += "NOT(";
+            dfs();
+            out += ')';
+        } else {
+            int o = int(opIdx % 3);
+            opIdx /= 3;
+            out += OPSTR[o];
+            out += '(';
+            dfs();
+            out += ',';
+            dfs();
+            out += ')';
+        }
+    };
+
+    dfs();
+    return out;
+}
+/* N ↦ expression, enumeration order = by total size n then lexicographic */
+std::string nth_expression(bigint N) {
+    int n = 0, hi = MAX_N;
+    while (n < hi) {
+        int m = (n + hi) / 2;
+        (prefixN[m] > N) ? hi = m : n = m + 1;
+    }
+    bigint rem = N - (n ? prefixN[n - 1] : 0);
+
+    int sSel = 0, uSel = -1, bSel = 0;
+    for (int u = n; u >= 0; --u) {
+        int s = n - u + 1, b = n - u;
+        if (s > MAX_S || u > MAX_U)
+            continue;
+
+        bigint blk = C[s][u] * Pow3[b] * Bell[s];
+        if (rem < blk) {
+            sSel = s;
+            uSel = u;
+            bSel = b;
+            break;
+        }
+        rem -= blk;
+    }
+
+    bigint shapeIdx = rem / (Pow3[bSel] * Bell[sSel]);
+    bigint tmp = rem % (Pow3[bSel] * Bell[sSel]);
+    bigint opIdx = tmp / Bell[sSel];
+    bigint rgsIdx = tmp % Bell[sSel];
+
+    std::string sig = unrank_shape(sSel, uSel, shapeIdx);
+    std::vector<int> labels = unrank_rgs(sSel, rgsIdx);
+
+    return emit_expr(sig, opIdx, labels);
+}
+
+/* Hamming weight trick to check neighbour rule */
+bool neighbour_ok(std::string_view e) {
+    uint32_t m = 0;
+    auto a = [](char c) { return c >= 'A' && c <= 'Z'; };
+    for (size_t i = 0; i < e.size(); ++i)
+        if (a(e[i]) && !(i && a(e[i - 1])) &&
+            !(i + 1 < e.size() && a(e[i + 1])))
+            m |= 1u << (e[i] - 'A');
+    for (int i = 1; i < 26; ++i)
+        if ((m >> i) & 1u && !(m >> (i - 1) & 1u) &&
+            !(i < 25 && (m >> (i + 1) & 1u)))
+            return false;
+    return true;
+}
+
+int bit_length(const bigint &v) noexcept {
+    return v == 0 ? 0 : boost::multiprecision::msb(v) + 1;
+}
