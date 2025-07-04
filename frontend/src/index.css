@@ -4,10 +4,9 @@
 
 @layer base {
   html {
-    font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-    color-scheme: light dark;
-    color: rgba(255, 255, 255, 0.87);
-    background-color: #242424;
+    font-family: Georgia, "Times New Roman", Times, serif;
+    color: #2b2b2b;
+    background-color: #fefbf3;
     line-height: 1.5;
     font-weight: 400;
     font-synthesis: none;
@@ -22,29 +21,23 @@
     min-height: 100vh;
   }
 
-  a {
-    @apply font-medium text-indigo-400 hover:text-indigo-300 no-underline;
-  }
-
-
-@layer base {
-  button {
-    @apply
-      px-4 py-2
-      text-white
-      bg-gray-800
-      rounded
-      border border-transparent
-      hover:border-purple-500
-      hover:bg-gray-700
-      focus:outline-none
-      focus:ring-2 focus:ring-purple-500
-      transition duration-200;
+  input,
+  button,
+  textarea {
+    @apply focus:outline-none;
   }
 }
 
+@layer components {
+  .btn {
+    @apply bg-[#d3cab2] text-[#2b2b2b] border border-[#ccc7b7] rounded-none hover:bg-[#c2baa4] disabled:opacity-50 transition px-4 py-2;
+  }
 
-  input {
-    @apply text-base px-3 py-2 bg-[#1e1e1e] text-white border border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-gray-400;
+  .input {
+    @apply bg-white border border-[#ccc7b7] rounded-none text-black placeholder-gray-400 px-3 py-2;
+  }
+
+  .card {
+    @apply bg-[#fdf9ee] border border-[#ccc7b7] rounded-none whitespace-pre-wrap break-words;
   }
 }
