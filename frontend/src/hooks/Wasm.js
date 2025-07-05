@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 
 let modulePromise = null;
 
@@ -7,11 +7,11 @@ export default function useWasm() {
 
   useEffect(() => {
     if (!modulePromise) {
-      const s = document.createElement('script');
-      s.src = '/wasm_main.js';
+      const s = document.createElement("script");
+      s.src = `${import.meta.env.BASE_URL}wasm_main.js`;
       document.body.appendChild(s);
 
-      modulePromise = new Promise(resolve => {
+      modulePromise = new Promise((resolve) => {
         s.onload = () => window.createModule().then(resolve);
       });
     }
