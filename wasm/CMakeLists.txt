@@ -5,7 +5,8 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1)  
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1)
+
 include(CTest)
 enable_testing()
 
@@ -14,9 +15,8 @@ if (CCACHE_PROGRAM)
   set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
 
-find_package(boost_filesystem CONFIG REQUIRED)
-find_package(boost_system CONFIG REQUIRED)
-find_package(boost_multiprecision CONFIG REQUIRED)
+# ✅ Use Boost with correct CONFIG naming
+find_package(Boost REQUIRED CONFIG COMPONENTS filesystem system multiprecision)
 
 add_library(compute_lib STATIC
   src/compute.cpp

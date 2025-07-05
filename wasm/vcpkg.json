@@ -6,5 +6,6 @@
     "boost-system",
     "boost-multiprecision",
     "catch2"
-  ]
+  ],
+  "overrides": []
 }
