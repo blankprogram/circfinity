@@ -1,5 +1,3 @@
-# CMakeLists.txt
-
 cmake_minimum_required(VERSION 3.21)
 project(circfinity-wasm LANGUAGES CXX)
 
@@ -17,22 +15,23 @@ if (CCACHE_PROGRAM)
   set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
 
-# Add vcpkg include path manually
-if(DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "${CMAKE_CURRENT_BINARY_DIR}/vcpkg_installed")
-  include_directories("${CMAKE_CURRENT_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include")
-endif()
+# ---- Find Boost.Multiprecision via vcpkg
+find_package(boost_multiprecision CONFIG REQUIRED)
 
+# ---- Compute library
 add_library(compute_lib STATIC
   src/compute.cpp
 )
 target_include_directories(compute_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
+target_link_libraries(compute_lib PUBLIC Boost::multiprecision)
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-  add_executable(wasm_main
-    src/wasm_main.cpp
-  )
+# ---- Emscripten executable
+if (DEFINED ENV{EMSCRIPTEN} OR CMAKE_CXX_COMPILER MATCHES "em\\+\\+")
+  message(STATUS "Forcing Emscripten build section")
+
+  add_executable(wasm_main src/wasm_main.cpp)
   target_link_libraries(wasm_main PRIVATE compute_lib)
   target_compile_options(wasm_main PRIVATE -Wall -Wextra)
   target_link_options(wasm_main PRIVATE
@@ -52,6 +51,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   )
 endif()
 
+# ---- Optional test support
 if (BUILD_TESTS)
   include(CTest)
   enable_testing()
