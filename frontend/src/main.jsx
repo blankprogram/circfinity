@@ -1,23 +1,21 @@
-// src/main.jsx
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route } from "react-router-dom";
 import Home from "./Home.jsx";
 import Expr from "./Expr.jsx";
 import useWasm from "./hooks/Wasm.js";
 import "./index.css";
 
 function App() {
-  // load wasm only once
   const wasm = useWasm();
 
   return (
-    <BrowserRouter basename="/circfinity">
+    <HashRouter>
       <Routes>
         <Route path="/" element={<Home wasm={wasm} />} />
         <Route path="/:n" element={<Expr wasm={wasm} />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
