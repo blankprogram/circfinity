@@ -10,12 +10,14 @@ set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1)
 include(CTest)
 enable_testing()
 
+# Optional: use ccache if available
 find_program(CCACHE_PROGRAM ccache)
 if (CCACHE_PROGRAM)
   set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
 
-find_package(Boost REQUIRED COMPONENTS filesystem system multiprecision)
+# Only multiprecision is needed (header-only)
+find_package(boost-multiprecision CONFIG REQUIRED)
 
 add_library(compute_lib STATIC
   src/compute.cpp
@@ -23,12 +25,12 @@ add_library(compute_lib STATIC
 target_include_directories(compute_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
+# No linking needed for header-only Boost
 target_link_libraries(compute_lib PUBLIC
-  Boost::filesystem
-  Boost::system
-  Boost::multiprecision
+  boost_multiprecision
 )
 
+# Emscripten target
 if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   add_executable(wasm_main
     src/wasm_main.cpp

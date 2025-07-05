@@ -1,11 +1,5 @@
 {
   "name": "circfinity",
   "version": "0.1.0",
-  "dependencies": [
-    "boost-filesystem",
-    "boost-system",
-    "boost-multiprecision",
-    "catch2"
-  ],
-  "overrides": []
+  "dependencies": ["boost-multiprecision", "catch2"]
 }
