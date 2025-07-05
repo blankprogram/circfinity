@@ -50,7 +50,7 @@ inline const auto C = [] {
     return c;
 }();
 
-/* DP_RGS – Ruskey/Williams table for restricted growth strings */
+/* DP_RGS –  table for restricted growth strings */
 inline const auto DP_RGS = [] {
     std::array<std::array<bigint, MAX_S + 2>, MAX_S + 2> dp{};
     for (int m = 0; m <= MAX_S + 1; ++m)
