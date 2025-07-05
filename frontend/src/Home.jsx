@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
 export default function Home({ wasm }) {
-  const [input, setInput] = useState("");
+  const [search, setSearch] = useState("");
   const [count, setCount] = useState("…");
   const navigate = useNavigate();
 
@@ -10,32 +10,38 @@ export default function Home({ wasm }) {
     if (wasm) setCount(wasm.get_expr_count());
   }, [wasm]);
 
-  const go = () => {
-    if (/^\d+$/.test(input)) navigate(`/${input}`);
+  const doSearch = () => {
+    if (/^\d+$/.test(search)) navigate(`/${search}`);
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4">
-      <h1 className="text-4xl mb-10">CircFinity</h1>
+    <div className="layout-page items-center justify-center px-4">
+      <h1 className="text-4xl mb-10 font-serif">CircFinity</h1>
 
       <div className="w-full max-w-sm space-y-6">
-        <div className="flex">
+        <div className="flex items-center">
           <input
             className="input flex-1"
-            placeholder="Enter index…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && go()}
+            placeholder="Go to index…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && doSearch()}
             disabled={!wasm}
           />
-          <button onClick={go} disabled={!wasm} className="btn">
-            {wasm ? "Go" : "Loading…"}
+          <button
+            className="btn btn-hover btn-large"
+            onClick={doSearch}
+            disabled={!wasm}
+          >
+            {wasm ? "Go" : "…"}
           </button>
         </div>
 
         <div className="space-y-2">
           <div className="text-sm">Total expressions</div>
-          <pre className="card p-4">{count}</pre>
+          <pre className="card card-content break-words whitespace-pre-wrap">
+            {count}
+          </pre>
         </div>
       </div>
     </div>

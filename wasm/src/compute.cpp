@@ -136,47 +136,6 @@ std::string evaluate_expr_full_json(bigint N, const std::string &jsonInputs) {
     json += "}";
     return json;
 }
-bool evaluate_expr_tree(const ExprTree *node,
-                        const std::unordered_map<std::string, bool> &inputs) {
-    if (!node)
-        throw std::runtime_error("Null node in evaluation");
-
-    if (node->type == "VAR") {
-        auto it = inputs.find(node->value);
-        if (it == inputs.end())
-            throw std::runtime_error("Missing input for variable: " +
-                                     node->value);
-        return it->second;
-    }
-
-    if (node->type == "NOT") {
-        return !evaluate_expr_tree(node->left.get(), inputs);
-    }
-
-    bool lhs = evaluate_expr_tree(node->left.get(), inputs);
-    bool rhs = evaluate_expr_tree(node->right.get(), inputs);
-
-    if (node->type == "AND")
-        return lhs && rhs;
-    if (node->type == "OR")
-        return lhs || rhs;
-    if (node->type == "XOR")
-        return lhs ^ rhs;
-
-    throw std::runtime_error("Unknown node type: " + node->type);
-}
-std::string evaluate_expr_json(bigint N, const std::string &jsonInputs) {
-    auto inputs = parse_input_map(jsonInputs);
-
-    std::string sig;
-    bigint opIdx;
-    std::vector<int> labels;
-    compute_expr_components(N, sig, opIdx, labels);
-    auto [_, tree] = emit_expr_both(sig, opIdx, labels);
-
-    bool result = evaluate_expr_tree(tree.get(), inputs);
-    return result ? "true" : "false";
-}
 
 /* serialises a logic expression tree to minimal JSON */
 std::string serialise_tree(const ExprTree *node) {

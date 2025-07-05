@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import Graph from "../src/components/Graph.jsx";
+import Graph from "../src/components/Graph";
 
 export default function Expr({ wasm }) {
   const { n } = useParams();
@@ -14,46 +14,55 @@ export default function Expr({ wasm }) {
   useEffect(() => {
     if (!wasm) return;
     try {
-      setExpr(wasm.get_expr(n));
-      setExprTree(JSON.parse(wasm.get_expr_full(n)).tree);
-    } catch (err) {
-      console.error(err);
+      const parsed = JSON.parse(wasm.get_expr_full(n));
+      setExpr(parsed.expr);
+      setExprTree(parsed.tree);
+    } catch {
       setExpr("Invalid index");
       setExprTree(null);
     }
   }, [wasm, n]);
 
-  const doSearch = () => /^\d+$/.test(search) && navigate(`/${search}`);
+  const doSearch = () => {
+    if (/^\d+$/.test(search)) navigate(`/${search}`);
+  };
 
   return (
-    <div className="h-screen flex flex-col bg-[#fefbf3] text-[#2b2b2b]">
-      <header className="border-y w-full py-2 px-4 flex items-center justify-between">
-        <Link to="/" className="text-xl font-serif">
+    <div className="layout-page">
+      <header className="w-full py-2 px-4 bg-section border-y border-edge flex items-center justify-between">
+        <Link to="/" className="text-xl font-serif font-normal">
           CircFinity
         </Link>
-        <div className="flex gap-2">
+        <div className="flex items-center">
           <input
-            className="input"
+            className="input flex-1"
             placeholder="Go to index…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && doSearch()}
+            disabled={!wasm}
           />
-          <button onClick={doSearch} className="btn">
-            Go
+          <button
+            className="btn btn-hover btn-large"
+            onClick={doSearch}
+            disabled={!wasm}
+          >
+            {wasm ? "Go" : "…"}
           </button>
         </div>
       </header>
 
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4 p-6 overflow-hidden">
-        <div className="card p-4 h-full overflow-auto">
-          <h2 className="text-xl font-semibold mb-2">Expression #{n}</h2>
-          <pre className="font-mono whitespace-pre-wrap break-words w-full">
+      <main className="layout-main grid-cols-1 lg:grid-cols-3">
+        <div className="card card-content">
+          <h2 className="text-xl font-serif font-normal mb-2 break-words whitespace-pre-wrap">
+            Expression #{n}
+          </h2>
+          <pre className="font-mono break-words whitespace-pre-wrap">
             {expr}
           </pre>
         </div>
 
-        <div className="border border-[#ccc7b7] bg-[#fdf9ee] min-h-[600px] h-full overflow-hidden flex">
+        <div className="card overflow-hidden flex">
           <Graph
             tree={exprTree}
             wasm={wasm}
@@ -63,8 +72,8 @@ export default function Expr({ wasm }) {
           />
         </div>
 
-        <div className="card p-4 h-full flex flex-col overflow-y-auto">
-          <h2 className="text-xl font-semibold mb-2">Output</h2>
+        <div className="card card-content flex flex-col overflow-y-auto">
+          <h2 className="text-xl font-serif font-normal mb-2">Output</h2>
           <p className="text-lg font-mono mb-4">
             {evaluationResult != null
               ? `Result: ${evaluationResult === "true" ? "1" : "0"}`
@@ -73,25 +82,28 @@ export default function Expr({ wasm }) {
 
           {truthTable.length > 0 && truthTable[0]?.inputs && (
             <>
-              <h3 className="font-semibold mb-1">Current Evaluation</h3>
+              <h3 className="text-base font-serif font-normal mb-1">
+                Current Evaluation
+              </h3>
+              <div className="border-t border-edge mb-2" />
               <div className="overflow-auto grow">
-                <table className="font-mono text-sm border border-gray-300 w-full">
+                <table className="table-custom table-sep font-mono text-sm">
                   <thead>
                     <tr>
-                      <th className="px-2 py-1 border-b text-left">Variable</th>
-                      <th className="px-2 py-1 border-b text-left">Value</th>
+                      <th>Variable</th>
+                      <th>Value</th>
                     </tr>
                   </thead>
                   <tbody>
                     {Object.entries(truthTable[0].inputs).map(([v, val]) => (
                       <tr key={v}>
-                        <td className="px-2 py-1 border-b">{v}</td>
-                        <td className="px-2 py-1 border-b">{val ? 1 : 0}</td>
+                        <td>{v}</td>
+                        <td>{val ? 1 : 0}</td>
                       </tr>
                     ))}
                     <tr>
-                      <td className="px-2 py-1 font-semibold">Output</td>
-                      <td className="px-2 py-1 font-semibold">
+                      <td className="font-normal">Output</td>
+                      <td className="font-normal">
                         {truthTable[0].output === "true" ? 1 : 0}
                       </td>
                     </tr>

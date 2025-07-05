@@ -4,23 +4,17 @@
 
 @layer base {
   html {
-    font-family: Georgia, "Times New Roman", Times, serif;
-    color: #2b2b2b;
-    background-color: #fefbf3;
-    line-height: 1.5;
-    font-weight: 400;
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    @apply font-serif text-ink bg-paper;
+    background-image: radial-gradient(
+      theme("colors.dot") 1px,
+      transparent 0.8px
+    );
+    background-size: 25px 25px;
+    @apply antialiased leading-relaxed;
   }
-
   body {
-    margin: 0;
-    min-width: 320px;
-    min-height: 100vh;
+    @apply m-0 min-w-[320px] min-h-screen;
   }
-
   input,
   button,
   textarea {
@@ -29,15 +23,57 @@
 }
 
 @layer components {
-  .btn {
-    @apply bg-[#d3cab2] text-[#2b2b2b] border border-[#ccc7b7] rounded-none hover:bg-[#c2baa4] disabled:opacity-50 transition px-4 py-2;
+  .layout-page {
+    @apply flex flex-col h-screen text-ink;
   }
-
-  .input {
-    @apply bg-white border border-[#ccc7b7] rounded-none text-black placeholder-gray-400 px-3 py-2;
+  .layout-main {
+    @apply flex-1 grid gap-4 p-6 overflow-hidden;
+  }
+  .layout-graph {
+    @apply w-full h-full flex flex-col;
   }
 
   .card {
-    @apply bg-[#fdf9ee] border border-[#ccc7b7] rounded-none whitespace-pre-wrap break-words;
+    @apply border border-edge rounded-none bg-transparent;
+  }
+  .card-content {
+    @apply p-4 h-full overflow-auto;
+  }
+
+  .input {
+    @apply bg-white border border-edge rounded-none text-black placeholder-gray-400 px-4;
+  }
+
+  .btn {
+    @apply bg-accent text-ink border border-edge rounded-none transition disabled:opacity-50 px-2;
+  }
+  .btn-hover {
+    @apply hover:bg-accentHover;
+  }
+
+  .btn-small {
+    @apply text-sm px-3 py-1;
+  }
+  .logic-true {
+    @apply bg-logicTrue;
+  }
+  .logic-false {
+    @apply bg-logicFalse;
+  }
+
+  .table-custom {
+    @apply w-full table-fixed border-collapse;
+  }
+  .table-custom th,
+  .table-custom td {
+    @apply px-4 py-2 text-left;
+  }
+  .table-custom th,
+  .table-custom td {
+    @apply border-b border-edge;
+  }
+  .table-sep th:not(:last-child),
+  .table-sep td:not(:last-child) {
+    @apply border-r border-edge;
   }
 }

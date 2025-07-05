@@ -1,84 +1,113 @@
-import React, { useEffect, useState, useMemo } from "react";
-import ReactFlow, { useReactFlow, ReactFlowProvider } from "reactflow";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
+import ReactFlow, {
+  ReactFlowProvider,
+  useReactFlow,
+  Handle,
+  Position,
+} from "reactflow";
 import ELK from "elkjs/lib/elk.bundled.js";
 import "reactflow/dist/style.css";
 
 const elk = new ELK();
 const nodeSize = { width: 140, height: 90 };
 
-function extractVariables(tree) {
-  const vars = [];
-  const seen = new Set();
+const DEFAULT_BG = "bg-gray-200";
+const TRUE_BG = "bg-logicTrue";
+const FALSE_BG = "bg-logicFalse";
 
-  (function walk(node) {
-    if (!node) return;
-    if (typeof node === "string") {
-      if (!seen.has(node)) {
-        seen.add(node);
-        vars.push(node);
-      }
-    } else if (node.type === "VAR") {
-      if (!seen.has(node.value)) {
-        seen.add(node.value);
-        vars.push(node.value);
-      }
-    } else if (node.type === "NOT") {
-      walk(node.child);
-    } else {
-      walk(node.left);
-      walk(node.right);
-    }
-  })(tree);
-
-  return vars;
+function LogicNode({ id, data }) {
+  const { label, hasIncoming, hasOutgoing, backgroundClass, width, height } =
+    data;
+  return (
+    <div
+      className={`relative flex items-center justify-center ${backgroundClass} text-[30px]`}
+      style={{ width, height }}
+    >
+      {hasIncoming && (
+        <Handle
+          type="target"
+          position={Position.Top}
+          id={`${id}-target`}
+          className="bg-edge"
+        />
+      )}
+      {label}
+      {hasOutgoing && (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          id={`${id}-source`}
+          className="bg-edge"
+        />
+      )}
+    </div>
+  );
 }
 
-function treeToElkGraph(tree, id = { current: 0 }) {
+const nodeTypes = { logic: LogicNode };
+
+function extractVariables(tree) {
+  const vars = new Set();
+  const stack = [tree];
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n) continue;
+    if (typeof n === "string") {
+      vars.add(n);
+    } else if (n.type === "VAR") {
+      vars.add(n.value);
+    } else if (n.type === "NOT") {
+      stack.push(n.child);
+    } else {
+      stack.push(n.left, n.right);
+    }
+  }
+  return Array.from(vars);
+}
+
+function treeToElkGraph(tree) {
+  let counter = 0;
   const nodes = [];
   const edges = [];
-
-  function walk(node, parentId = null) {
-    const thisId = `n${id.current++}`;
-    const isLeaf = typeof node === "string" || node.type === "VAR";
-    const label = isLeaf
-      ? typeof node === "string"
-        ? node
-        : node.value
-      : node.type;
-
-    nodes.push({
-      id: thisId,
-      width: nodeSize.width,
-      height: nodeSize.height,
-      label,
-      nodeType: isLeaf ? "leaf" : "internal",
-    });
-
-    if (parentId !== null) {
+  function build(n, parentId) {
+    const myId = `n${counter++}`;
+    const isLeaf = typeof n === "string" || n.type === "VAR";
+    const label = isLeaf ? (typeof n === "string" ? n : n.value) : n.type;
+    nodes.push({ id: myId, label });
+    if (parentId) {
       edges.push({
-        id: `${parentId}-${thisId}`,
+        id: `${parentId}-${myId}`,
         sources: [parentId],
-        targets: [thisId],
+        targets: [myId],
       });
     }
-
     if (!isLeaf) {
-      if (node.type === "NOT") walk(node.child, thisId);
-      else {
-        walk(node.left, thisId);
-        walk(node.right, thisId);
+      if (n.type === "NOT") {
+        build(n.child, myId);
+      } else {
+        build(n.left, myId);
+        build(n.right, myId);
       }
     }
   }
-
-  walk(tree);
+  build(tree, null);
   return { nodes, edges };
 }
 
+const ELK_OPTIONS = {
+  "elk.algorithm": "layered",
+  "elk.direction": "DOWN",
+  "elk.spacing.nodeNode": "80",
+  "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+  "elk.layered.spacing.nodeNodeSameLayer": "120",
+  "elk.spacing.edgeNode": "20",
+  "elk.spacing.edgeEdge": "10",
+};
+
 function GraphInner({ tree, wasm, n, onEvaluate, onTruthTable }) {
   const { fitView } = useReactFlow();
-  const [baseNodes, setBaseNodes] = useState([]);
-  const [styledNodes, setStyledNodes] = useState([]);
+
+  const [nodesMeta, setNodesMeta] = useState([]);
   const [edges, setEdges] = useState([]);
   const [varStates, setVarStates] = useState({});
 
@@ -86,126 +115,145 @@ function GraphInner({ tree, wasm, n, onEvaluate, onTruthTable }) {
 
   useEffect(() => {
     if (!tree || !wasm) return;
+    setNodesMeta([]);
+    setEdges([]);
+    setVarStates(Object.fromEntries(variables.map((v) => [v, true])));
 
-    const initialVars = Object.fromEntries(variables.map((v) => [v, true]));
-    setVarStates(initialVars);
-
+    let active = true;
     (async () => {
-      const { nodes: rawNodes, edges: rawEdges } = treeToElkGraph(tree);
+      const { nodes: rawNodes, edges: rawRawEdges } = treeToElkGraph(tree);
       const layout = await elk.layout({
         id: "root",
-        layoutOptions: {
-          "elk.algorithm": "layered",
-          "elk.direction": "DOWN",
-          "elk.spacing.nodeNode": "80",
-          "elk.layered.spacing.nodeNodeBetweenLayers": "120",
-          "elk.layered.spacing.nodeNodeSameLayer": "120",
-          "elk.spacing.edgeNode": "20",
-          "elk.spacing.edgeEdge": "10",
-        },
-        children: rawNodes,
-        edges: rawEdges,
+        layoutOptions: ELK_OPTIONS,
+        children: rawNodes.map((n) => ({
+          ...n,
+          width: nodeSize.width,
+          height: nodeSize.height,
+        })),
+        edges: rawRawEdges,
       });
+      if (!active) return;
 
       setEdges(
-        rawEdges.map((e) => ({
-          id: e.id,
-          source: e.sources[0],
-          target: e.targets[0],
-          type: "straight",
-        })),
+        rawRawEdges.map((e) => {
+          const [src] = e.sources;
+          const [tgt] = e.targets;
+          return {
+            id: e.id,
+            source: src,
+            target: tgt,
+            type: "straight",
+            sourceHandle: `${src}-source`,
+            targetHandle: `${tgt}-target`,
+            style: {
+              strokeWidth: 2,
+            },
+          };
+        }),
       );
 
-      const base = layout.children.map((node) => ({
-        id: node.id,
-        data: {
-          label: node.label,
-          isLeaf: node.nodeType === "leaf",
-        },
-        position: { x: node.x, y: node.y },
-        width: node.width,
-        height: node.height,
-        sourcePosition: node.nodeType === "leaf" ? undefined : "bottom",
-        targetPosition: "top",
-      }));
+      setNodesMeta(
+        layout.children.map((n) => {
+          const hasIncoming = rawRawEdges.some((e) => e.targets[0] === n.id);
+          const hasOutgoing = rawRawEdges.some((e) => e.sources[0] === n.id);
+          return {
+            id: n.id,
+            type: "logic",
+            position: { x: n.x, y: n.y },
+            width: n.width,
+            height: n.height,
+            data: {
+              label: n.label,
+              hasIncoming,
+              hasOutgoing,
+              backgroundClass: DEFAULT_BG,
+              width: n.width,
+              height: n.height,
+            },
+          };
+        }),
+      );
 
-      setBaseNodes(base);
       requestAnimationFrame(() => fitView({ padding: 0.3 }));
     })();
-  }, [tree, wasm, variables, fitView, n]);
+
+    return () => {
+      active = false;
+    };
+  }, [tree, wasm, variables, fitView]);
+
+  const nodes = useMemo(() => {
+    if (!nodesMeta.length || !wasm) return [];
+    let resultMap = {};
+    try {
+      resultMap = JSON.parse(
+        wasm.evaluate_expr_full_json(n, JSON.stringify(varStates)),
+      );
+    } catch {}
+    return nodesMeta.map((node) => {
+      const val = resultMap[node.id];
+      const bg = val === undefined ? DEFAULT_BG : val ? TRUE_BG : FALSE_BG;
+      return {
+        ...node,
+        data: { ...node.data, backgroundClass: bg },
+      };
+    });
+  }, [nodesMeta, varStates, wasm, n]);
 
   useEffect(() => {
-    if (!baseNodes.length || !wasm) return;
-
+    if (!nodesMeta.length || !wasm) return;
+    let resultMap = {};
     try {
-      const resultRaw = wasm.evaluate_expr_full_json(
-        n,
-        JSON.stringify(varStates),
+      resultMap = JSON.parse(
+        wasm.evaluate_expr_full_json(n, JSON.stringify(varStates)),
       );
-      const resultMap = JSON.parse(resultRaw);
+    } catch {}
+    const out = resultMap["n0"] ?? null;
+    onEvaluate?.(out ? "true" : "false");
+    onTruthTable?.([
+      { inputs: { ...varStates }, output: out ? "true" : "false" },
+    ]);
+  }, [nodesMeta, varStates, wasm, n, onEvaluate, onTruthTable]);
 
-      const styled = baseNodes.map((node) => {
-        const value = resultMap[node.id];
-        return {
-          ...node,
-          style: {
-            backgroundColor:
-              value === undefined ? "#eee" : value ? "#d4edda" : "#f8d7da",
-            border: "1px solid #888",
-            fontSize: "30px",
-          },
-        };
-      });
-
-      setStyledNodes(styled);
-
-      const output = resultMap["n0"] ?? null;
-      onEvaluate?.(output ? "true" : "false");
-      onTruthTable?.([
-        { inputs: { ...varStates }, output: output ? "true" : "false" },
-      ]);
-    } catch (err) {
-      console.error("Eval failed", err);
-      onEvaluate?.(null);
-      onTruthTable?.([]);
-    }
-  }, [baseNodes, varStates, wasm, n, onEvaluate, onTruthTable]);
-
-  const toggleVariable = (v) => {
-    setVarStates((prev) => ({ ...prev, [v]: !prev[v] }));
-  };
+  const toggleVariable = useCallback(
+    (v) => setVarStates((prev) => ({ ...prev, [v]: !prev[v] })),
+    [],
+  );
 
   return (
-    <div className="w-full h-full flex flex-col">
+    <div className="layout-graph">
       <div className="flex-1">
         <ReactFlow
-          nodes={styledNodes}
+          nodes={nodes}
           edges={edges}
+          nodeTypes={nodeTypes}
           fitView
+          fitViewOptions={{ padding: 0.2 }}
           panOnScroll
           zoomOnScroll
           minZoom={0.01}
           maxZoom={2}
-          className="w-full h-full"
-          onNodeClick={(_, node) => {
-            const { label, isLeaf } = node.data || {};
-            if (isLeaf && label in varStates) toggleVariable(label);
-          }}
+          onNodeClick={(_, node) =>
+            node.data.hasIncoming &&
+            !node.data.hasOutgoing &&
+            toggleVariable(node.data.label)
+          }
+          className="w-full h-[90%]"
         />
       </div>
-      <div className="bg-[#fdf9ee] border-t border-[#ccc7b7] px-4 py-2 flex flex-wrap gap-2 justify-center">
-        {variables.map((v) => (
-          <button
-            key={v}
-            className={`btn text-sm px-3 py-1 ${
-              varStates[v] ? "bg-green-100" : "bg-red-100"
-            }`}
-            onClick={() => toggleVariable(v)}
-          >
-            {v}: {varStates[v] ? "ON" : "OFF"}
-          </button>
-        ))}
-      </div>
+      {nodesMeta.length > 0 && (
+        <div className="bg-section border-t border-edge px-4 py-2 flex flex-wrap gap-2 justify-center">
+          {variables.map((v) => (
+            <button
+              key={v}
+              className={`btn btn-small btn-hover ${varStates[v] ? TRUE_BG : FALSE_BG}`}
+              onClick={() => toggleVariable(v)}
+            >
+              {v}: {varStates[v] ? "ON" : "OFF"}
+            </button>
+          ))}
+        </div>
+      )}{" "}
     </div>
   );
 }
