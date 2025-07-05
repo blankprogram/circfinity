@@ -15,8 +15,7 @@ if (CCACHE_PROGRAM)
   set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
 
-# ✅ Use Boost with correct CONFIG naming
-find_package(Boost REQUIRED CONFIG COMPONENTS filesystem system multiprecision)
+find_package(Boost REQUIRED COMPONENTS filesystem system multiprecision)
 
 add_library(compute_lib STATIC
   src/compute.cpp
