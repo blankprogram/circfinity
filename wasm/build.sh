@@ -5,6 +5,7 @@ rm -rf build && mkdir build && cd build
 
 cmake -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTS=OFF \
     -DCMAKE_TOOLCHAIN_FILE=../../vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DVCPKG_MANIFEST_MODE=ON \
     -DVCPKG_TARGET_TRIPLET=wasm32-emscripten \

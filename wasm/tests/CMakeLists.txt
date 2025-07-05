@@ -1,4 +1,4 @@
-find_package(Catch2 CONFIG REQUIRED)
+find_package(Catch2 3 CONFIG REQUIRED)
 
 add_executable(test_compute
   test_compute.cpp

@@ -7,8 +7,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1)
 
-include(CTest)
-enable_testing()
+
+option(BUILD_TESTS "Enable building tests" ON)
+
+if (BUILD_TESTS)
+  include(CTest)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
+
 
 # Optional: use ccache
 find_program(CCACHE_PROGRAM ccache)
@@ -49,4 +56,3 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   )
 endif()
 
-add_subdirectory(tests)
