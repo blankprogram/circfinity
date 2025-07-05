@@ -1,69 +1,25 @@
-import React, { useEffect, useState } from 'react'
-import { Routes, Route, useParams, Link, useNavigate } from 'react-router-dom'
-import './App.css'
-
-function Home() {
-  const navigate = useNavigate()
-  const [input, setInput] = useState('')
-  const go = () => {
-    if (/^\d+$/.test(input)) navigate(`/${input}`)
-  }
-  return (
-    <div className="page">
-      <h2>Enter an index</h2>
-      <input
-        placeholder="42"
-        value={input}
-        onChange={e => setInput(e.target.value)}
-      />
-      <button onClick={go}>Go</button>
-    </div>
-  )
-}
-
-function Expr() {
-  let { n } = useParams()
-  const [mod, setMod] = useState(null)
-  const [expr, setExpr] = useState('…loading…')
-  const [count, setCount] = useState('…')
-
-  useEffect(() => {
-    // load WASM once
-    const s = document.createElement('script')
-    s.src = '/wasm_main.js'
-    s.onload = () =>
-      window.createModule().then(m => {
-        setMod(m)
-        setCount(m.get_expr_count())
-      })
-    document.body.appendChild(s)
-  }, [])
-
-  useEffect(() => {
-    if (mod) {
-      try {
-        setExpr(mod.get_expr(n))
-      } catch {
-        setExpr('Invalid index')
-      }
-    }
-  }, [mod, n])
-
-  return (
-    <div className="page">
-      <Link to="/">← Home</Link>
-      <h2>Expression #{n}</h2>
-      <p>Total expressions: {count}</p>
-      <pre>{expr}</pre>
-    </div>
-  )
-}
+import { useEffect } from "react";
+import { Routes, Route, useNavigate } from "react-router-dom";
+import Home from "./Home.jsx";
+import Expr from "./Expr.jsx";
+import useWasm from "./hooks/Wasm.js";
 
 export default function App() {
+  const wasm = useWasm();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const redirect = url.searchParams.get("redirect");
+    if (redirect) {
+      navigate(redirect, { replace: true });
+    }
+  }, []);
+
   return (
     <Routes>
-      <Route path="/" element={<Home />} />
-      <Route path="/:n" element={<Expr />} />
+      <Route path="/" element={<Home wasm={wasm} />} />
+      <Route path="/:n" element={<Expr wasm={wasm} />} />
     </Routes>
-  )
+  );
 }

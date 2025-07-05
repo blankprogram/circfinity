@@ -1,0 +1,14 @@
+<!-- public/404.html -->
+<!doctype html>
+<html>
+  <head>
+    <meta http-equiv="refresh" content="0; url=/circfinity/" />
+  </head>
+  <body>
+    <p>Redirecting…</p>
+    <script>
+      const redirectPath = location.pathname.replace(/^\/circfinity/, "");
+      location.replace(`/circfinity/?redirect=${redirectPath}`);
+    </script>
+  </body>
+</html>
