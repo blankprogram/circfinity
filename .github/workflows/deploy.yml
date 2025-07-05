@@ -19,10 +19,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Set up Emscripten
+      - name: Set up Emscripten (with cache)
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 3.1.45
+          actions-cache-folder: emsdk-cache
 
       - name: Install Ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
@@ -41,12 +42,6 @@ jobs:
           path: frontend/node_modules
           key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
 
-      - name: Cache Emscripten system libraries
-        uses: actions/cache@v4
-        with:
-          path: ~/.emscripten_cache
-          key: emscripten-${{ runner.os }}-${{ hashFiles('wasm/src/**', 'wasm/CMakeLists.txt') }}
-
       - name: Bootstrap vcpkg
         run: ./vcpkg/bootstrap-vcpkg.sh
 
@@ -56,6 +51,7 @@ jobs:
       - name: Build WASM
         run: |
           cd wasm
+          emcc --version
           chmod +x build.sh
           ./build.sh
 

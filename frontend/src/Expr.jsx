@@ -6,7 +6,7 @@ export default function Expr({ wasm }) {
   const { n } = useParams();
   const navigate = useNavigate();
   const [search, setSearch] = useState(n);
-  const [expr, setExpr] = useState("…loading…");
+  const [expr, setExpr] = useState("…");
   const [exprTree, setExprTree] = useState(null);
   const [evaluationResult, setEvaluationResult] = useState(null);
   const [truthTable, setTruthTable] = useState([]);
@@ -30,7 +30,7 @@ export default function Expr({ wasm }) {
   return (
     <div className="layout-page">
       <header className="w-full py-2 px-4 bg-section border-y border-edge flex items-center justify-between">
-        <Link to="/" className="text-xl font-serif font-normal">
+        <Link to="/" className="block text-2xl font-serif no-underline">
           CircFinity
         </Link>
         <div className="flex items-center">
@@ -74,10 +74,10 @@ export default function Expr({ wasm }) {
 
         <div className="card card-content flex flex-col overflow-y-auto">
           <h2 className="text-xl font-serif font-normal mb-2">Output</h2>
-          <p className="text-lg font-mono mb-4">
+          <p className="text-lg font-serif mb-4">
             {evaluationResult != null
               ? `Result: ${evaluationResult === "true" ? "1" : "0"}`
-              : "Toggle inputs to see result"}
+              : "..."}
           </p>
 
           {truthTable.length > 0 && truthTable[0]?.inputs && (
@@ -87,7 +87,7 @@ export default function Expr({ wasm }) {
               </h3>
               <div className="border-t border-edge mb-2" />
               <div className="overflow-auto grow">
-                <table className="table-custom table-sep font-mono text-sm">
+                <table className="table-custom table-sep font-serif text-md">
                   <thead>
                     <tr>
                       <th>Variable</th>
