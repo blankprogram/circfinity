@@ -16,11 +16,6 @@ if (CCACHE_PROGRAM)
 endif()
 
 # ------------------------------
-# Boost multiprecision setup
-# ------------------------------
-find_package(Boost REQUIRED COMPONENTS multiprecision)
-
-# ------------------------------
 # Compute logic library
 # ------------------------------
 add_library(compute_lib STATIC
@@ -29,7 +24,6 @@ add_library(compute_lib STATIC
 target_include_directories(compute_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
-target_link_libraries(compute_lib PUBLIC Boost::multiprecision)
 
 # ------------------------------
 # Emscripten-specific WASM target
