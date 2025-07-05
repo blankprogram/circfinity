@@ -7,15 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1)
 
-
 option(BUILD_TESTS "Enable building tests" ON)
-
-if (BUILD_TESTS)
-  include(CTest)
-  enable_testing()
-  add_subdirectory(tests)
-endif()
-
 
 # Optional: use ccache
 find_program(CCACHE_PROGRAM ccache)
@@ -23,16 +15,25 @@ if (CCACHE_PROGRAM)
   set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
 
-# No find_package needed for boost-multiprecision
+# ------------------------------
+# Boost multiprecision setup
+# ------------------------------
+find_package(Boost REQUIRED COMPONENTS multiprecision)
+
+# ------------------------------
+# Compute logic library
+# ------------------------------
 add_library(compute_lib STATIC
   src/compute.cpp
 )
 target_include_directories(compute_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  ${VCPKG_INCLUDE_DIRS}  # ensures vcpkg headers are visible
 )
+target_link_libraries(compute_lib PUBLIC Boost::multiprecision)
 
-# Emscripten-specific target
+# ------------------------------
+# Emscripten-specific WASM target
+# ------------------------------
 if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   add_executable(wasm_main
     src/wasm_main.cpp
@@ -56,3 +57,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   )
 endif()
 
+# ------------------------------
+# Optional test target
+# ------------------------------
+if (BUILD_TESTS)
+  include(CTest)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
