@@ -1,3 +1,5 @@
+# CMakeLists.txt
+
 cmake_minimum_required(VERSION 3.21)
 project(circfinity-wasm LANGUAGES CXX)
 
@@ -9,15 +11,17 @@ set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1)
 
 option(BUILD_TESTS "Enable building tests" ON)
 
-# Optional: use ccache
+# Optional: ccache
 find_program(CCACHE_PROGRAM ccache)
 if (CCACHE_PROGRAM)
   set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
 
-# ------------------------------
-# Compute logic library
-# ------------------------------
+# Add vcpkg include path manually
+if(DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "${CMAKE_CURRENT_BINARY_DIR}/vcpkg_installed")
+  include_directories("${CMAKE_CURRENT_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include")
+endif()
+
 add_library(compute_lib STATIC
   src/compute.cpp
 )
@@ -25,9 +29,6 @@ target_include_directories(compute_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# ------------------------------
-# Emscripten-specific WASM target
-# ------------------------------
 if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   add_executable(wasm_main
     src/wasm_main.cpp
@@ -51,9 +52,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   )
 endif()
 
-# ------------------------------
-# Optional test target
-# ------------------------------
 if (BUILD_TESTS)
   include(CTest)
   enable_testing()
