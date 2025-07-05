@@ -62,7 +62,10 @@ function extractVariables(tree) {
       stack.push(n.left, n.right);
     }
   }
-  return Array.from(vars);
+
+  return Array.from(vars).sort(
+    (a, b) => a.length - b.length || a.localeCompare(b),
+  );
 }
 
 function treeToElkGraph(tree) {

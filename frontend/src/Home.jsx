@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import AnimatedText from "../src/components/AnimatedText";
 
 export default function Home({ wasm }) {
   const [search, setSearch] = useState("");
@@ -16,7 +17,12 @@ export default function Home({ wasm }) {
 
   return (
     <div className="layout-page items-center justify-center px-4">
-      <h1 className="text-4xl mb-10 font-serif">CircFinity</h1>
+      <AnimatedText
+        from="CircFinity"
+        to="ILoveBools"
+        interval={40}
+        className="text-4xl mb-10 font-serif"
+      />
 
       <div className="w-full max-w-sm space-y-6">
         <div className="flex items-center">

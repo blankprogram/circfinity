@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link as RouterLink } from "react-router-dom";
 import Graph from "../src/components/Graph";
+import AnimatedText from "../src/components/AnimatedText";
 
 export default function Expr({ wasm }) {
   const { n } = useParams();
@@ -30,9 +31,10 @@ export default function Expr({ wasm }) {
   return (
     <div className="layout-page">
       <header className="w-full py-2 px-4 bg-section border-y border-edge flex items-center justify-between">
-        <Link to="/" className="block text-2xl font-serif no-underline">
-          CircFinity
-        </Link>
+        <RouterLink to="/" className="block text-2xl font-serif no-underline">
+          <AnimatedText from="CircFinity" to="hellothere" interval={40} />
+        </RouterLink>
+
         <div className="flex items-center">
           <input
             className="input flex-1"
